@@ -1,0 +1,38 @@
+name: Plan handoff bug
+description: Report a reproducible OMP plan identity or installation problem
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private plan contents, or full session transcripts.
+  - type: input
+    id: omp-version
+    attributes:
+      label: OMP version
+      placeholder: "18.0.10"
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: OMP profile
+      placeholder: "default or named profile"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the proposal payload shape, expected slug, and selected slug/path.
+    validations:
+      required: true
+  - type: textarea
+    id: e2e-output
+    attributes:
+      label: Manual E2E output
+      description: Paste the relevant redacted output from npm run e2e:programmer or omp plugin doctor --json.
+    validations:
+      required: true

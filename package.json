@@ -1,0 +1,49 @@
+{
+  "name": "omp-plan-protection",
+  "version": "0.1.0",
+  "description": "Global OMP (Oh My Pi) plan-handoff protection: a deterministic stale-plan guard with a low-token optional advisor.",
+  "author": "stgmt",
+  "homepage": "https://github.com/stgmt/omp-plan-protection#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stgmt/omp-plan-protection.git"
+  },
+  "bugs": {
+    "url": "https://github.com/stgmt/omp-plan-protection/issues"
+  },
+  "keywords": [
+    "oh-my-pi",
+    "omp",
+    "plan-mode",
+    "plan-handoff",
+    "stale-plan",
+    "ai-safety",
+    "developer-tools"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "package.json",
+    "README.md",
+    "LICENSE",
+    "dist/"
+  ],
+  "engines": {
+    "omp": ">=17.3.7"
+  },
+  "omp": {
+    "extensions": [
+      "./dist/extension.js"
+    ]
+  },
+  "scripts": {
+    "check": "node --check src/plan-protection.ts && node --check dist/extension.js && node --check scripts/install-all-profiles.mjs && node --check scripts/uninstall-all-profiles.mjs && node --check scripts/e2e-programmer.mjs && node --check scripts/e2e-advisor-contract.mjs && node --check scripts/e2e-advisor-live.mjs",
+    "build": "bun build src/plan-protection.ts --outfile dist/extension.js --target bun --format esm --external @oh-my-pi/pi-ai",
+    "install-global": "node scripts/install-all-profiles.mjs",
+    "uninstall-global": "node scripts/uninstall-all-profiles.mjs",
+    "e2e:programmer": "bun scripts/e2e-programmer.mjs",
+    "e2e:advisor": "bun scripts/e2e-advisor-contract.mjs",
+    "e2e:advisor:live": "bun scripts/e2e-advisor-live.mjs",
+    "e2e:all": "bun scripts/e2e-programmer.mjs && bun scripts/e2e-advisor-contract.mjs"
+  }
+}

@@ -1,0 +1,34 @@
+# OMP Plan Protection
+
+> Standalone Oh My Pi (OMP) plugin that prevents stale-plan substitution during plan mode.
+
+## Canonical facts
+
+- Package: `omp-plan-protection`.
+- Runtime entrypoint: `dist/extension.js` through `package.json#omp.extensions`.
+- Hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
+- Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` file already exists.
+- Invalid Markdown, empty, whitespace, traversal, or missing-artifact proposals are blocked before OMP dispatch.
+- Valid slug/artifact proposals are passed through unchanged.
+- Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, two calls per session, UI-only output.
+- No Meridian dependency. No `claude -p`. No transcript or full-plan upload.
+- Global install: `node scripts/install-all-profiles.mjs`.
+- Manual programmer proof: `npm run e2e:programmer`.
+- Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
+- Manual report: `audit-reports/omp-global-plan-protection-2026-08-31.md`.
+
+## Installation
+
+```bash
+omp plugin link E:/repos/omp-plan-protection --scope user
+node scripts/install-all-profiles.mjs
+```
+
+## Safety boundary
+
+The advisor is explanatory only. It cannot approve, rewrite, or unblock a hard guard decision.
+The deterministic identity check is the source of truth.
+
+## Repository
+
+GitHub: https://github.com/stgmt/omp-plan-protection
