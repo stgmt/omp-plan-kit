@@ -46,10 +46,10 @@ For a named profile:
 omp --profile live-test plugin list --json
 ```
 
-When this repository is published, the remote installation form is:
+When this repository is published, the remote installation form is the default user-scope install:
 
 ```bash
-omp plugin install github:stgmt/omp-plan-protection --scope user
+omp plugin install github:stgmt/omp-plan-protection#v0.1.1
 ```
 
 ## What problem it prevents
