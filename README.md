@@ -19,6 +19,17 @@ workflow.
 - **Manual proof:** installed-package E2E covers mutations, stale-plan controls, profiles,
   rollback, and native advisor behavior.
 
+## Why OMP Plan Kit exists
+
+OMP Plan Kit started from [the incident reported in OMP issue #10333](https://github.com/can1357/oh-my-pi/issues/10333):
+after a plan-scope correction, OMP accepted an older plan instead of the plan the user had
+just reviewed. The reported impact was roughly half of one week's Codex allowance on the
+maximum subscription tier.
+
+The kit is intended to control this class of leakage and similar failures: malformed plan
+identity, stale approval fallback, missing artifacts, scope/todo drift, revision mismatch,
+and later plan/spec drift as the roadmap grows.
+
 ## Quick start
 
 ### Install the released plugin as an OMP user
