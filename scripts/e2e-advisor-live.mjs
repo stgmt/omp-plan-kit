@@ -11,7 +11,7 @@ process.env.OMP_PLAN_ADVISOR_MAX_TOKENS = "160";
 
 const home = os.homedir();
 const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
-const installedExtension = path.join(home, ".omp", "plugins", "node_modules", "omp-plan-protection", "dist", "extension.js");
+const installedExtension = path.join(home, ".omp", "plugins", "node_modules", "omp-plan-kit", "dist", "extension.js");
 const { loadExtensions } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/extensions/loader.ts")).href);
 const { discoverAuthStorage } = await import(pathToFileURL(path.join(ompRoot, "src/sdk.ts")).href);
 const { ModelRegistry } = await import(pathToFileURL(path.join(ompRoot, "src/config/model-registry.ts")).href);
@@ -53,7 +53,7 @@ const delivered = await Promise.race([
 assert.ok(delivered.message.length > 0);
 
 process.stdout.write(`${JSON.stringify({
-  schema: "omp-plan-protection-advisor-live-e2e@3",
+  schema: "omp-plan-kit-advisor-live-e2e@3",
   decision: "pass",
   model: { provider: model.provider, id: model.id },
   hardGuard: blocked.reason,

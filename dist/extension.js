@@ -1,5 +1,5 @@
 // @bun
-// src/plan-protection.ts
+// src/extension.ts
 import crypto from "crypto";
 import * as fs from "fs/promises";
 import os from "os";
@@ -8,7 +8,7 @@ import { complete } from "@oh-my-pi/pi-ai";
 var PROPOSE_PATH = "xd://propose";
 var PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
 var LOCAL_ROOT = path.join(os.tmpdir(), "omp-local");
-var WINDOWS_LOCAL_ROOT_MAX_CHARS = 180;
+var RECEIPT_PATH = path.join(os.homedir(), ".omp", "agent", "omp-plan-kit-receipts.ndjson");
 var MAX_ADVISOR_CALLS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_CALLS, 2, 0, 10);
 var ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS, 120000, 0, 86400000);
 var ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 3000, 500, 30000);
@@ -197,7 +197,7 @@ function createPlanProtectionForTest(dependencies = {}) {
   };
 }
 function planProtection(pi) {
-  pi.setLabel("Plan protection");
+  pi.setLabel("OMP Plan Kit");
   const policy = createPlanProtectionForTest();
   pi.on("before_agent_start", async (event, ctx) => policy.handleAgentStart(event, ctx));
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));

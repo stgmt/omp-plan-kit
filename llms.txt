@@ -1,34 +1,42 @@
-# OMP Plan Protection
+# OMP Plan Kit
 
-> Standalone Oh My Pi (OMP) plugin that prevents stale-plan substitution during plan mode.
+> Standalone Oh My Pi (OMP) planning kit. The first release is a deterministic plan-handoff guard; future releases add plan structure, readability, plan-pomogator workflow, and OMP Spec Kit synchronization.
 
 ## Canonical facts
 
-- Package: `omp-plan-protection`.
+- Package: `omp-plan-kit`.
+- Product: OMP Plan Kit for safe, readable, traceable AI coding plans.
 - Runtime entrypoint: `dist/extension.js` through `package.json#omp.extensions`.
-- Hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
-- Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` file already exists.
+- Current hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
+- Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` artifact already exists.
 - Invalid Markdown, empty, whitespace, traversal, or missing-artifact proposals are blocked before OMP dispatch.
-- Valid slug/artifact proposals are passed through unchanged.
+- Valid slug/artifact proposals pass through unchanged.
 - Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, two calls per session, UI-only output.
 - No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
-- Global install: `node scripts/install-all-profiles.mjs`.
+- User install: `omp plugin install github:stgmt/omp-plan-kit#v0.2.0`.
+- All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
+- Product roadmap: `ROADMAP.md`.
 - Release review: `audit-reports/release-review-v0.1.1.md`.
+
+## Future direction
+
+The kit will synchronize plans with project OMP Spec Kit graphs: requirements, acceptance
+criteria, decisions, research, tasks, scenarios, implementation files, and verification evidence.
+The plan identity and spec identity remain distinct but linked.
 
 ## Installation
 
 ```bash
-omp plugin link E:/repos/omp-plan-protection --scope user
-node scripts/install-all-profiles.mjs
+omp plugin install github:stgmt/omp-plan-kit#v0.2.0
 ```
 
 ## Safety boundary
 
 The advisor is explanatory only. It cannot approve, rewrite, or unblock a hard guard decision.
-The deterministic identity check is the source of truth.
+The deterministic plan artifact identity check is the source of truth.
 
 ## Repository
 
-GitHub: https://github.com/stgmt/omp-plan-protection
+GitHub: https://github.com/stgmt/omp-plan-kit

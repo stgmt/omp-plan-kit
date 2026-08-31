@@ -8,7 +8,7 @@ process.env.OMP_PLAN_ADVISOR = "0";
 const home = os.homedir();
 const defaultAgentDir = path.join(home, ".omp", "agent");
 const profilesDir = path.join(home, ".omp", "profiles");
-const installedExtension = path.join(path.dirname(defaultAgentDir), "plugins", "node_modules", "omp-plan-protection", "dist", "extension.js");
+const installedExtension = path.join(path.dirname(defaultAgentDir), "plugins", "node_modules", "omp-plan-kit", "dist", "extension.js");
 const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
 const { loadExtensions } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/extensions/loader.ts")).href);
 const { dispatchResolutionDevice } = await import(pathToFileURL(path.join(ompRoot, "src/tools/resolve.ts")).href);
@@ -63,11 +63,11 @@ async function main() {
   const roots = await profileAgentDirs();
   const discovery = [];
   for (const agentDir of roots) {
-    const pluginDir = path.join(path.dirname(agentDir), "plugins", "node_modules", "omp-plan-protection");
+    const pluginDir = path.join(path.dirname(agentDir), "plugins", "node_modules", "omp-plan-kit");
     const manifest = JSON.parse(await fs.readFile(path.join(pluginDir, "package.json"), "utf8"));
     const extension = path.join(pluginDir, "dist", "extension.js");
     await fs.stat(extension);
-    assert.equal(manifest.name, "omp-plan-protection");
+    assert.equal(manifest.name, "omp-plan-kit");
     assert.deepEqual(manifest.omp?.extensions, ["./dist/extension.js"]);
     const loadedProfile = await loadExtensions([extension], process.cwd());
     assert.deepEqual(loadedProfile.errors, [], `OMP loader must import ${extension}: ${JSON.stringify(loadedProfile.errors)}`);
@@ -130,7 +130,7 @@ async function main() {
     mutations.push({ name: "exact-artifact-deleted-with-old-plan-present", decision: "block", code: "PLAN_FILE_MISSING" });
 
     process.stdout.write(`${JSON.stringify({
-      schema: "omp-plan-protection-programmer-e2e@2",
+      schema: "omp-plan-kit-programmer-e2e@2",
       decision: "pass",
       ompRoot,
       discovery,

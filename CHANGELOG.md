@@ -1,14 +1,25 @@
-# Changelog
+# OMP Plan Kit Changelog
 
-All notable changes to OMP Plan Protection are documented here.
+All notable changes to OMP Plan Kit are documented here.
+
+## [0.2.0] - 2026-08-31
+
+### Changed
+
+- Renamed the product, package, and repository from `omp-plan-protection` to `omp-plan-kit`.
+- Added the product roadmap for plan lifecycle integrity, structure, readability, plan-pomogator
+  workflow, and OMP Spec Kit synchronization.
+- Updated public installation, search metadata, AI-readable project facts, and release references.
+- Renamed the runtime receipt file to `omp-plan-kit-receipts.ndjson`.
+- Kept the v0.1 deterministic handoff guard as the protected foundation of the kit.
 
 ## [0.1.1] - 2026-08-31
 
 ### Changed
 
-- Manual programmer E2E now loads and exercises the installed package in every existing OMP profile.
-- Exact local artifact resolution honors OMP's session artifact root override.
-- Advisor E2E uses the OMP host model API seam and verifies deduplication, todo triggering, and zero calls on the normal path.
+- Manual programmer E2E loads the installed package through OMP's real loader for every existing profile.
+- Exact plan-artifact preflight honors OMP's session artifact-root override.
+- Advisor contract E2E verifies deduplication, todo triggering, and zero calls on the normal path.
 
 ## [0.1.0] - 2026-08-31
 

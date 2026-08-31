@@ -1,19 +1,21 @@
 {
-  "name": "omp-plan-protection",
-  "version": "0.1.1",
-  "description": "Global OMP (Oh My Pi) plan-handoff protection: a deterministic stale-plan guard with a low-token optional advisor.",
+  "name": "omp-plan-kit",
+  "version": "0.2.0",
+  "description": "Global Oh My Pi (OMP) plan kit starting with deterministic stale-plan protection and bounded native review.",
   "author": "stgmt",
-  "homepage": "https://github.com/stgmt/omp-plan-protection#readme",
+  "homepage": "https://github.com/stgmt/omp-plan-kit#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stgmt/omp-plan-protection.git"
+    "url": "https://github.com/stgmt/omp-plan-kit.git"
   },
   "bugs": {
-    "url": "https://github.com/stgmt/omp-plan-protection/issues"
+    "url": "https://github.com/stgmt/omp-plan-kit/issues"
   },
   "keywords": [
     "oh-my-pi",
     "omp",
+    "omp-plan-kit",
+    "plan-kit",
     "plan-mode",
     "plan-handoff",
     "stale-plan",
@@ -37,8 +39,8 @@
     ]
   },
   "scripts": {
-    "check": "node --check src/plan-protection.ts && node --check dist/extension.js && node --check scripts/install-all-profiles.mjs && node --check scripts/uninstall-all-profiles.mjs && node --check scripts/e2e-programmer.mjs && node --check scripts/e2e-advisor-contract.mjs && node --check scripts/e2e-advisor-live.mjs",
-    "build": "bun build src/plan-protection.ts --outfile dist/extension.js --target bun --format esm --external @oh-my-pi/pi-ai",
+    "check": "node --check src/extension.ts && node --check dist/extension.js && node --check scripts/install-all-profiles.mjs && node --check scripts/uninstall-all-profiles.mjs && node --check scripts/e2e-programmer.mjs && node --check scripts/e2e-advisor-contract.mjs && node --check scripts/e2e-advisor-live.mjs",
+    "build": "bun build src/extension.ts --outfile dist/extension.js --target bun --format esm --external @oh-my-pi/pi-ai",
     "install-global": "node scripts/install-all-profiles.mjs",
     "uninstall-global": "node scripts/uninstall-all-profiles.mjs",
     "e2e:programmer": "bun scripts/e2e-programmer.mjs",

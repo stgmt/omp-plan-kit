@@ -27,7 +27,7 @@ function runOmp(profile, action) {
 function hasPlugin(stdout) {
   try {
     const parsed = JSON.parse(stdout);
-    return Array.isArray(parsed.npm) && parsed.npm.some((plugin) => plugin?.name === "omp-plan-protection");
+    return Array.isArray(parsed.npm) && parsed.npm.some((plugin) => plugin?.name === "omp-plan-kit");
   } catch {
     return false;
   }
@@ -41,9 +41,9 @@ for (const profile of await profileNames()) {
     results.push({ profile, status: "absent" });
     continue;
   }
-  const removed = runOmp(profile, ["uninstall", "omp-plan-protection", "--scope", "user"]);
+  const removed = runOmp(profile, ["uninstall", "omp-plan-kit", "--scope", "user"]);
   if (removed.status !== 0) throw new Error(`OMP plugin uninstall failed for ${profile}: ${(removed.stderr || removed.stdout || "unknown error").trim()}`);
   results.push({ profile, status: "uninstalled", output: removed.stdout.trim() });
 }
 
-process.stdout.write(`${JSON.stringify({ schema: "omp-plan-protection-cli-uninstall@2", decision: "pass", results }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ schema: "omp-plan-kit-cli-uninstall@2", decision: "pass", results }, null, 2)}\n`);

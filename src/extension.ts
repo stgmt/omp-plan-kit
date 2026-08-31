@@ -9,7 +9,7 @@ import type { Model } from "@oh-my-pi/pi-ai";
 const PROPOSE_PATH = "xd://propose";
 const PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
 const LOCAL_ROOT = path.join(os.tmpdir(), "omp-local");
-const WINDOWS_LOCAL_ROOT_MAX_CHARS = 180;
+const RECEIPT_PATH = path.join(os.homedir(), ".omp", "agent", "omp-plan-kit-receipts.ndjson");
 const MAX_ADVISOR_CALLS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_CALLS, 2, 0, 10);
 const ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS, 120_000, 0, 86_400_000);
 const ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 3_000, 500, 30_000);
@@ -235,7 +235,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
 }
 
 export default function planProtection(pi: ExtensionAPI): void {
-  pi.setLabel("Plan protection");
+  pi.setLabel("OMP Plan Kit");
   const policy = createPlanProtectionForTest();
   pi.on("before_agent_start", async (event, ctx) => policy.handleAgentStart(event, ctx));
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));

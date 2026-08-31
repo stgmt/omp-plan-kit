@@ -11,7 +11,7 @@ process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS = "1000";
 process.env.OMP_PLAN_ADVISOR_MAX_TOKENS = "160";
 
 const home = os.homedir();
-const installedExtension = path.join(home, ".omp", "plugins", "node_modules", "omp-plan-protection", "dist", "extension.js");
+const installedExtension = path.join(home, ".omp", "plugins", "node_modules", "omp-plan-kit", "dist", "extension.js");
 const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
 const { loadLegacyPiModule } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/plugins/legacy-pi-compat.ts")).href);
 const { createPlanProtectionForTest } = await loadLegacyPiModule(installedExtension);
@@ -71,7 +71,7 @@ try {
   });
 
   process.stdout.write(`${JSON.stringify({
-    schema: "omp-plan-protection-advisor-contract-e2e@3",
+    schema: "omp-plan-kit-advisor-contract-e2e@3",
     decision: "pass",
     hardGuard: blocked.reason,
     triggers: ["invalid proposal", "explicit rejected-term todo"],

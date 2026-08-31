@@ -44,4 +44,4 @@ for (const profile of await profileNames()) {
   results.push({ profile, name: parsed.name, version: parsed.version, enabled: parsed.enabled, path: parsed.path });
 }
 
-process.stdout.write(`${JSON.stringify({ schema: "omp-plan-protection-cli-install@1", decision: "pass", repoRoot, results }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ schema: "omp-plan-kit-cli-install@1", decision: "pass", repoRoot, results }, null, 2)}\n`);
