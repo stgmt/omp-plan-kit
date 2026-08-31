@@ -19,7 +19,7 @@
 - Manual programmer proof: `npm run e2e:programmer`.
 - Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
 - Product roadmap: `ROADMAP.md`.
-- Release review: `audit-reports/omp-plan-kit-v1.0-release-review.md`.
+- Release review: `audit-reports/omp-plan-kit-v1.0-release-report.md`.
 - Origin incident: https://github.com/can1357/oh-my-pi/issues/10333.
 - Reported impact: an older plan was accepted after a scope correction, costing roughly half of one week's Codex allowance on the maximum subscription tier.
 
