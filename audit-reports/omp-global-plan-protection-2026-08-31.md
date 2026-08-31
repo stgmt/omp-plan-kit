@@ -11,7 +11,7 @@ E:/repos/omp-plan-protection
 ```
 
 The repository is a normal OMP plugin package. The protection is installed through OMP's
-own `plugin link` lifecycle into every currently existing OMP profile. No Meridian dependency
+own `plugin link` lifecycle into every currently existing OMP profile. No external proxy dependency
 is present or used.
 
 ## OMP source-grounded contracts
@@ -193,7 +193,7 @@ Result: `decision: pass`.
 }
 ```
 
-This is a real native OMP model call through the extension's `complete()` path. No Meridian
+This is a real native OMP model call through the extension's `complete()` path. No external proxy
 endpoint is involved.
 
 ## Rollback/reinstall E2E

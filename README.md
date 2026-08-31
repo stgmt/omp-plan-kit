@@ -1,10 +1,13 @@
 # OMP Plan Protection
 
+[![Latest release](https://img.shields.io/github/v/release/stgmt/omp-plan-protection?label=release)](https://github.com/stgmt/omp-plan-protection/releases)
+[![License](https://img.shields.io/github/license/stgmt/omp-plan-protection)](https://github.com/stgmt/omp-plan-protection/blob/main/LICENSE)
+
 **A standalone Oh My Pi (OMP) plugin that prevents stale-plan substitution during plan mode.**
 It adds a deterministic pre-execution guard for `xd://propose` and an optional low-token
 advisor for high-confidence scope mistakes.
 
-- **No Meridian dependency.** The optional advisor uses OMP's native model API.
+- **No external proxy dependency.** The optional advisor uses OMP's native model API.
 - **No silent rewrite.** Invalid plan handoffs are blocked, not guessed into another slug.
 - **Global user installation.** Link the plugin with the official `omp plugin` CLI.
 - **Manual E2E proof.** The repository includes hands-on mutation and edge-case probes against
@@ -242,6 +245,8 @@ loader with the local OMP runtime.
 
 Release notes are in `CHANGELOG.md`. Report a reproducible handoff with the exact OMP version,
 profile, proposal payload shape, selected plan path, and the output of:
+
+The release review is `audit-reports/release-review-v0.1.1.md`; the machine-readable summary is `llms.txt`.
 
 ```bash
 npm run e2e:programmer

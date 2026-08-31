@@ -11,11 +11,11 @@
 - Invalid Markdown, empty, whitespace, traversal, or missing-artifact proposals are blocked before OMP dispatch.
 - Valid slug/artifact proposals are passed through unchanged.
 - Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, two calls per session, UI-only output.
-- No Meridian dependency. No `claude -p`. No transcript or full-plan upload.
+- No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
 - Global install: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
-- Manual report: `audit-reports/omp-global-plan-protection-2026-08-31.md`.
+- Release review: `audit-reports/release-review-v0.1.1.md`.
 
 ## Installation
 
