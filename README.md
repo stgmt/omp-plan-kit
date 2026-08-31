@@ -24,7 +24,7 @@ workflow.
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v0.2.0
+omp plugin install github:stgmt/omp-plan-kit#v0.2.1
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -236,6 +236,6 @@ profile, proposal payload shape, expected/selected plan identity, and redacted m
 
 ## Release
 
-Current release: [`v0.2.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v0.2.0).
+Current release: [`v0.2.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v0.2.1).
 
 License: MIT.

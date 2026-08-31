@@ -1,6 +1,6 @@
 {
   "name": "omp-plan-kit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Global Oh My Pi (OMP) plan kit starting with deterministic stale-plan protection and bounded native review.",
   "author": "stgmt",
   "homepage": "https://github.com/stgmt/omp-plan-kit#readme",

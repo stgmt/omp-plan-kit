@@ -2,6 +2,13 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+
+- Restored the Windows local-artifact path-length threshold used by the exact plan preflight.
+- Manual E2E now exercises the artifact-root override path that caught the regression.
+
 ## [0.2.0] - 2026-08-31
 
 ### Changed

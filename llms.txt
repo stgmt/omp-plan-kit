@@ -13,7 +13,7 @@
 - Valid slug/artifact proposals pass through unchanged.
 - Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, two calls per session, UI-only output.
 - No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
-- User install: `omp plugin install github:stgmt/omp-plan-kit#v0.2.0`.
+- User install: `omp plugin install github:stgmt/omp-plan-kit#v0.2.1`.
 - All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
@@ -29,7 +29,7 @@ The plan identity and spec identity remain distinct but linked.
 ## Installation
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v0.2.0
+omp plugin install github:stgmt/omp-plan-kit#v0.2.1
 ```
 
 ## Safety boundary
