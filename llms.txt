@@ -6,6 +6,7 @@
 
 - Package: `omp-plan-kit`.
 - Product: OMP Plan Kit for safe, readable, traceable AI coding plans.
+- Current release: `v1.0.0`.
 - Runtime entrypoint: `dist/extension.js` through `package.json#omp.extensions`.
 - Current hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
 - Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` artifact already exists.
@@ -13,12 +14,12 @@
 - Valid slug/artifact proposals pass through unchanged.
 - Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, two calls per session, UI-only output.
 - No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
-- User install: `omp plugin install github:stgmt/omp-plan-kit#v0.2.1`.
+- User install: `omp plugin install github:stgmt/omp-plan-kit#v1.0.0`.
 - All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Manual advisor proof: `npm run e2e:advisor` and `npm run e2e:advisor:live`.
 - Product roadmap: `ROADMAP.md`.
-- Release review: `audit-reports/omp-plan-kit-rename-review-2026-08-31.md`.
+- Release review: `audit-reports/omp-plan-kit-v1.0-release-review.md`.
 - Origin incident: https://github.com/can1357/oh-my-pi/issues/10333.
 - Reported impact: an older plan was accepted after a scope correction, costing roughly half of one week's Codex allowance on the maximum subscription tier.
 
@@ -31,7 +32,7 @@ The plan identity and spec identity remain distinct but linked.
 ## Installation
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v0.2.1
+omp plugin install github:stgmt/omp-plan-kit#v1.0.0
 ```
 
 ## Safety boundary

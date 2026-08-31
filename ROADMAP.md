@@ -22,9 +22,9 @@ The product serves three readers:
 3. **Human reviewers** — need a readable plan, visible scope, rationale, risks, and proof of
    what changed.
 
-## Current baseline — v0.1 guard
+## Current baseline — v1.0 foundation
 
-Status: released.
+Status: released as `omp-plan-kit` v1.0.0.
 
 - Reject a full Markdown body sent to `xd://propose`.
 - Require one exact plan slug.

@@ -2,6 +2,16 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.0.0] - 2026-08-31
+
+### Released
+
+- Declares OMP Plan Kit as the stable product name and installable OMP plugin.
+- Ships the deterministic stale-plan handoff guard as the v1 foundation.
+- Ships the bounded native OMP advisor with a hard 160-token cap and disabled reasoning.
+- Ships the roadmap for plan lifecycle, structure, readability, plan-pomogator workflow, and OMP Spec Kit synchronization.
+- Publishes manual installation, mutation, edge-case, rollback, and native advisor evidence.
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed
