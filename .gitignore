@@ -1,5 +1,6 @@
 node_modules/
 *.log
+.tmp/
 *.tmp
 manual-*.json
 .DS_Store
