@@ -69,7 +69,10 @@ async function main() {
     await fs.stat(extension);
     assert.equal(manifest.name, "omp-plan-protection");
     assert.deepEqual(manifest.omp?.extensions, ["./dist/extension.js"]);
-    discovery.push({ agentDir, pluginDir, extension, manifest: "valid" });
+    const loadedProfile = await loadExtensions([extension], process.cwd());
+    assert.deepEqual(loadedProfile.errors, [], `OMP loader must import ${extension}: ${JSON.stringify(loadedProfile.errors)}`);
+    assert.equal(loadedProfile.extensions[0]?.handlers.get("tool_call")?.length, 1);
+    discovery.push({ agentDir, pluginDir, extension, manifest: "valid", loader: "pass" });
   }
 
   const loaded = await loadExtensions([installedExtension], process.cwd());

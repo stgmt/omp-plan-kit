@@ -6,6 +6,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const profilesDir = path.join(os.homedir(), ".omp", "profiles");
+const packageManifest = JSON.parse(await fs.readFile(path.join(repoRoot, "package.json"), "utf8"));
+const expectedName = packageManifest.name;
+const expectedVersion = packageManifest.version;
 
 async function profileNames() {
   const names = ["default"];
@@ -35,7 +38,7 @@ for (const profile of await profileNames()) {
   } catch {
     throw new Error(`OMP plugin link returned non-JSON output for ${profile}`);
   }
-  if (parsed.name !== "omp-plan-protection" || parsed.version !== "0.1.0" || parsed.enabled !== true) {
+  if (parsed.name !== expectedName || parsed.version !== expectedVersion || parsed.enabled !== true) {
     throw new Error(`OMP plugin link returned an unexpected result for ${profile}`);
   }
   results.push({ profile, name: parsed.name, version: parsed.version, enabled: parsed.enabled, path: parsed.path });

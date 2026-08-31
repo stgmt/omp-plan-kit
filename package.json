@@ -1,6 +1,6 @@
 {
   "name": "omp-plan-protection",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Global OMP (Oh My Pi) plan-handoff protection: a deterministic stale-plan guard with a low-token optional advisor.",
   "author": "stgmt",
   "homepage": "https://github.com/stgmt/omp-plan-protection#readme",

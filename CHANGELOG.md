@@ -2,6 +2,14 @@
 
 All notable changes to OMP Plan Protection are documented here.
 
+## [0.1.1] - 2026-08-31
+
+### Changed
+
+- Manual programmer E2E now loads and exercises the installed package in every existing OMP profile.
+- Exact local artifact resolution honors OMP's session artifact root override.
+- Advisor E2E uses the OMP host model API seam and verifies deduplication, todo triggering, and zero calls on the normal path.
+
 ## [0.1.0] - 2026-08-31
 
 ### Added
