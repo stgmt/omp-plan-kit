@@ -2,6 +2,13 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.0.1] - 2026-08-31
+
+### Maintenance
+
+- Aligns the release tag, package version, public install instructions, and final review evidence.
+- Publishes the post-release review report in the same main line as the release candidate.
+
 ## [1.0.0] - 2026-08-31
 
 ### Released

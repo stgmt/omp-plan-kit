@@ -35,7 +35,7 @@ and later plan/spec drift as the roadmap grows.
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.0.0
+omp plugin install github:stgmt/omp-plan-kit#v1.0.1
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -247,8 +247,8 @@ profile, proposal payload shape, expected/selected plan identity, and redacted m
 
 ## Release
 
-Current release: [`v1.0.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.0.0).
+Current release: [`v1.0.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.0.1).
 
-Manual release report: `audit-reports/omp-plan-kit-v1.0-release-report.md`.
+Manual release report: `audit-reports/omp-plan-kit-v1.0.1-review.md`.
 
 License: MIT.
