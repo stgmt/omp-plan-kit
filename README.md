@@ -35,7 +35,7 @@ and later plan/spec drift as the roadmap grows.
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.0.1
+omp plugin install github:stgmt/omp-plan-kit#v1.1.0
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -94,12 +94,16 @@ OMP write(path=xd://propose, content=...)
 The programmer guard is the authority for allow/block. The optional advisor is explanatory only.
 It cannot approve, rewrite, or unblock a rejected handoff.
 
-## Optional native OMP advisor
+## Optional native OMP advisor (exit-gate)
 
-The advisor runs only when a deterministic finding exists:
+The advisor is an economical exit-gate that runs **only** at plan handoff (`write xd://propose <slug>`) on the completed `local://<slug>-plan.md` artifact.
 
-- malformed `xd://propose` payload;
-- a todo update repeats a scope term explicitly rejected in the latest user prompt.
+- **Zero waste on planning**: intermediate steps (todo updates, reads, scratch edits) spend zero advisor tokens.
+- **Deterministic blocks cost zero tokens**: malformed slugs, traversal, or missing artifacts are rejected as `PLAN_HANDOFF_*` before any model call.
+- **LLM review at handoff**: the advisor receives the user's objective/constraints + the exact plan excerpt (redacted, bounded) and returns `APPROVE` or `REJECT`.
+  - `REJECT` → hard block `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>` before the OMP human-review overlay opens; the agent stays in plan mode.
+  - `APPROVE` → the handoff passes through to OMP core dispatch unchanged.
+- **Cache**: an unchanged plan re-proposal hits an in-session `SHA-256` cache and spends zero additional tokens.
 
 It uses OMP's own model runtime:
 
@@ -111,21 +115,21 @@ complete(model, context, { maxTokens: 160, disableReasoning: true })
 
 Budget and context rules:
 
-- maximum two calls per OMP session;
-- 120-second cooldown and repeated-signature suppression;
+- maximum three calls per OMP session;
+- zero cooldown by default (`OMP_PLAN_ADVISOR_COOLDOWN_MS=0`) and plan-content-hash cache;
 - 160 output tokens maximum, reasoning disabled;
-- bounded evidence only, never the full plan or transcript;
+- bounded redacted evidence only, never the full transcript;
 - result is a UI notification, not a message inserted into the main model context;
-- model failure never weakens the programmer guard.
+- model failure never weakens the programmer guard (fail-open to approve).
 
 Configuration:
 
 | Variable | Default | Purpose |
 |---|---:|---|
 | `OMP_PLAN_ADVISOR` | `1` | Set `0` to disable only the advisor |
-| `OMP_PLAN_ADVISOR_MAX_CALLS` | `2` | Per-session advisor call cap |
-| `OMP_PLAN_ADVISOR_COOLDOWN_MS` | `120000` | Duplicate/cooldown window |
-| `OMP_PLAN_ADVISOR_TIMEOUT_MS` | `3000` | Native OMP model-call timeout |
+| `OMP_PLAN_ADVISOR_MAX_CALLS` | `3` | Per-session advisor call cap |
+| `OMP_PLAN_ADVISOR_COOLDOWN_MS` | `0` | Duplicate/cooldown window (0 = cache-only) |
+| `OMP_PLAN_ADVISOR_TIMEOUT_MS` | `15000` | Native OMP model-call timeout |
 | `OMP_PLAN_ADVISOR_MAX_TOKENS` | `160` | Output-token cap, clamped to 32–256 |
 | `OMP_PLAN_ADVISOR_MODEL` | `@advisor` | OMP model or role resolved by `ctx.models` |
 
@@ -170,8 +174,21 @@ The probe loads the installed release package through OMP's real loader and exer
 npm run e2e:advisor
 ```
 
-The probe verifies malformed-proposal and rejected-term triggers, duplicate suppression, bounded
-request shape, disabled reasoning, and zero extra calls on the normal proposal path.
+The probe verifies zero waste on syntax errors and intermediate todo steps, advisor execution on
+defective plans (blocking with `[PLAN_ADVISOR_BLOCK]`), approval on clean plans, in-session
+`SHA-256` cache hits, bounded request shape (`maxTokens: 160`, `disableReasoning: true`), and
+signal timeouts.
+
+### Real in-process handoff with OMP core
+
+```bash
+npm run e2e:handoff
+```
+
+Loads the installed package through OMP's real loader, drives a real `write xd://propose` handoff
+against `dispatchResolutionDevice` and `resolveApprovedPlan`, and proves: zero waste on `todo`,
+advisor rejection before core dispatch, clean-plan approval reaching the human-review overlay,
+and cache deduplication on unchanged re-proposals.
 
 ### Live native OMP model path
 
@@ -179,8 +196,9 @@ request shape, disabled reasoning, and zero extra calls on the normal proposal p
 npm run e2e:advisor:live
 ```
 
-This performs one real native OMP `complete()` call using the configured `@advisor` model and
-shows the resulting UI advisory without exposing credentials.
+Performs two real native OMP `complete()` calls via the configured `@advisor` model
+(`openai-codex/gpt-5.6-sol` by default): defective plan is rejected, clean concrete plan is
+approved — both with bounded UI advisories and without exposing credentials.
 
 ### Rollback and reinstall
 
@@ -194,15 +212,17 @@ The helpers use the official OMP user plugin lifecycle for every current profile
 ## Repository map
 
 ```text
-src/plan-protection.ts                 current extension implementation
+src/extension.ts                       current extension implementation
 dist/extension.js                      shipped OMP plugin entrypoint
 ROADMAP.md                             product direction and release gates
 llms.txt                               concise AI-readable project facts
 scripts/install-all-profiles.mjs       official CLI link across current profiles
 scripts/uninstall-all-profiles.mjs     official CLI uninstall across current profiles
-scripts/e2e-programmer.mjs             manual loader, mutation, and edge probe
-scripts/e2e-advisor-contract.mjs       manual advisor budget/trigger probe
-scripts/e2e-advisor-live.mjs           one native OMP model-call probe
+tests/e2e-programmer.mjs               manual loader, mutation, and edge probe
+tests/e2e-advisor-contract.mjs         advisor contract (budget, bounds, cache)
+tests/e2e-real-plan-handoff.mjs        real in-process handoff with OMP core
+tests/e2e-advisor-live.mjs             two real native OMP model calls
+.omp/rules/tests.md                    project rule: test discipline (dogfood)
 audit-reports/                         source grounding, release, and install evidence
 ```
 

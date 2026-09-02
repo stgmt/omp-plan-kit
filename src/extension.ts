@@ -11,20 +11,17 @@ const PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
 const LOCAL_ROOT = path.join(os.tmpdir(), "omp-local");
 const WINDOWS_LOCAL_ROOT_MAX_CHARS = 180;
 const RECEIPT_PATH = path.join(os.homedir(), ".omp", "agent", "omp-plan-kit-receipts.ndjson");
-const MAX_ADVISOR_CALLS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_CALLS, 2, 0, 10);
-const ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS, 120_000, 0, 86_400_000);
-const ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 3_000, 500, 30_000);
+const MAX_ADVISOR_CALLS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_CALLS, 3, 0, 10);
+const ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS, 0, 0, 86_400_000);
+const ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 15_000, 500, 60_000);
 const ADVISOR_MAX_TOKENS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_TOKENS, 160, 32, 256);
 const ADVISOR_MAX_OUTPUT_CHARS = 600;
-const HOST_SCOPE_TERMS = ["upstream", "authority", "providerKind", "serverId", "registrySnapshot", "deny-list"];
-const NEGATIVE_SCOPE_RE = /(?:выпил\w*|убер\w*|не\s+(?:надо|нужно|нуж\w*|дел\w*|трог\w*)|не\s+хоч\w*|запрет\w*|do\s+not|don't|not\s+needed|no\s+need|remove)/iu;
-const DESIGN_SCOPE_RE = /(authority|providerKind|serverId|registrySnapshot|upstream|deny[- ]list|архитектур\w*|доработ\w*\s+OMP)/iu;
 
 type SessionState = {
-  forbiddenTerms: string[];
+  userPrompt: string;
   calls: number;
   lastCallAt: number;
-  signatures: Set<string>;
+  cache: Map<string, { verdict: "APPROVE" | "REJECT"; reason: string }>;
 };
 
 type GuardResult = { block: true; reason: string } | undefined;
@@ -35,37 +32,32 @@ type ProposalCheck =
 
 type CompleteFn = typeof complete;
 
-type TestDependencies = {
+export type TestDependencies = {
   complete?: CompleteFn;
 };
+
+let activeTestDependencies: TestDependencies = {};
+
+export function setTestDependencies(deps: TestDependencies): void {
+  activeTestDependencies = deps;
+}
 
 function boundedNumber(raw: string | undefined, fallback: number, min: number, max: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function sessionIdFrom(ctx: ExtensionContext): string {
-  return ctx.sessionManager.getSessionId();
-}
-
 function stateFor(states: Map<string, SessionState>, sessionId: string): SessionState {
   const existing = states.get(sessionId);
   if (existing) return existing;
-  const created: SessionState = { forbiddenTerms: [], calls: 0, lastCallAt: 0, signatures: new Set() };
+  const created: SessionState = { userPrompt: "", calls: 0, lastCallAt: 0, cache: new Map() };
   states.set(sessionId, created);
   return created;
 }
 
-function compact(value: unknown, maxChars: number): string {
-  return String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, maxChars);
-}
-
 function redact(value: unknown, maxChars: number): string {
-  return compact(value, maxChars)
+  const stringified = String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, maxChars);
+  return stringified
     .replace(/\b(?:ghp|github_pat)_[A-Za-z0-9_]+\b/giu, "[REDACTED]")
     .replace(/\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password)\s*[:=]\s*[^\s]+/giu, "$1=[REDACTED]");
 }
@@ -125,16 +117,6 @@ async function preflightProposal(payload: unknown, sessionId: string, options?: 
   }
 }
 
-function extractForbiddenTerms(prompt: string): string[] {
-  if (!NEGATIVE_SCOPE_RE.test(prompt) || !DESIGN_SCOPE_RE.test(prompt)) return [];
-  const lower = prompt.toLowerCase();
-  return HOST_SCOPE_TERMS.filter((term) => lower.includes(term.toLowerCase()));
-}
-
-function signature(kind: string, detail: string): string {
-  return crypto.createHash("sha256").update(`${kind}\n${detail}`).digest("hex").slice(0, 16);
-}
-
 async function writeReceipt(data: Record<string, unknown>): Promise<void> {
   try {
     await fs.mkdir(path.dirname(RECEIPT_PATH), { recursive: true });
@@ -149,88 +131,172 @@ function resolveAdvisorModel(ctx: ExtensionContext): Model | undefined {
   return ctx.models.resolve(spec) ?? ctx.models.current();
 }
 
-async function advise(
+/**
+ * Reviews a completed plan artifact when exiting plan mode (xd://propose).
+ * Runs strictly on proposal handoff, never on intermediate turns.
+ */
+async function reviewProposedPlan(
   ctx: ExtensionContext,
   state: SessionState,
-  kind: string,
-  detail: string,
-  hardBlocked: boolean,
+  check: { slug: string; planUrl: string; planPath: string; sha256: string },
+  planContent: string,
   completeImpl: CompleteFn,
-): Promise<void> {
-  const sessionId = sessionIdFrom(ctx);
-  const key = signature(kind, detail);
+): Promise<{ verdict: "APPROVE" | "REJECT"; reason: string }> {
+  const sessionId = ctx.sessionManager.getSessionId();
   const enabled = (process.env.OMP_PLAN_ADVISOR ?? "1").toLowerCase() !== "0";
-  const now = Date.now();
+
+  // Fast-path: if this exact plan content was already reviewed in this session, return cached verdict (Zero waste!)
+  const cached = state.cache.get(check.sha256);
+  if (cached) {
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: cached.verdict, source: "cache" });
+    return cached;
+  }
+
   if (!enabled || MAX_ADVISOR_CALLS === 0) {
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: "disabled" });
-    return;
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "advisor-disabled" });
+    return { verdict: "APPROVE", reason: "Advisor disabled; plan allowed by default." };
   }
-  if (state.calls >= MAX_ADVISOR_CALLS || now - state.lastCallAt < ADVISOR_COOLDOWN_MS || state.signatures.has(key)) {
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: "budget-suppressed" });
-    return;
+
+  const now = Date.now();
+  if (state.calls >= MAX_ADVISOR_CALLS || (ADVISOR_COOLDOWN_MS > 0 && now - state.lastCallAt < ADVISOR_COOLDOWN_MS)) {
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "budget-suppressed" });
+    return { verdict: "APPROVE", reason: "Advisor call budget reached; handoff permitted." };
   }
+
   const model = resolveAdvisorModel(ctx);
   if (!model) {
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: "model-unavailable" });
-    return;
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "model-unavailable" });
+    return { verdict: "APPROVE", reason: "Advisor model unavailable; handoff permitted." };
   }
+
   const apiKey = await ctx.modelRegistry.getApiKey(model);
   if (!apiKey) {
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: "credential-unavailable", provider: model.provider, model: model.id });
-    return;
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "credential-unavailable" });
+    return { verdict: "APPROVE", reason: "Advisor credential unavailable; handoff permitted." };
   }
 
   state.calls += 1;
   state.lastCallAt = now;
-  state.signatures.add(key);
-  const prompt = [
-    "You are a narrow plan-handoff safety reviewer.",
-    "Return at most two concrete bullets, max 80 words, no preamble, and do not rewrite code.",
-    `Event: ${kind}. Hard guard blocked: ${hardBlocked}.`,
-    `Evidence: ${redact(detail, 500)}.`,
-    "Focus only on the exact artifact, slug, or revision that must be verified next.",
+
+  const boundedPrompt = redact(state.userPrompt, 600);
+  const boundedPlan = redact(planContent, 1200);
+
+  const promptText = [
+    "You are the OMP Plan Advisor reviewing a proposed plan at the exit of plan mode.",
+    "Evaluate whether this plan is viable, safe, and ready to hand off for execution.",
+    `User Objective / Constraints: ${boundedPrompt || "None specified"}`,
+    `Plan Artifact: ${check.planUrl}`,
+    "Plan Excerpt:",
+    boundedPlan,
+    "",
+    "Rules:",
+    "1. If the plan introduces forbidden changes, violates constraints, or lacks concrete steps, respond with:",
+    "REJECT: <clear explanation of what must be fixed in the plan, max 40 words>",
+    "2. If the plan is sound, safe, and ready for operator approval, respond with:",
+    "APPROVE: <brief confirmation, max 30 words>",
   ].join("\n");
+
   try {
     const response = await completeImpl(
       model,
       {
-        messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
+        messages: [{ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() }],
       },
-      { apiKey, maxTokens: ADVISOR_MAX_TOKENS, disableReasoning: true, signal: AbortSignal.timeout(ADVISOR_TIMEOUT_MS) },
+      {
+        apiKey,
+        maxTokens: ADVISOR_MAX_TOKENS,
+        disableReasoning: true,
+        signal: AbortSignal.timeout(ADVISOR_TIMEOUT_MS),
+      },
     );
-    const text = response.content.filter((block) => block.type === "text").map((block) => block.text).join(" ").trim().slice(0, ADVISOR_MAX_OUTPUT_CHARS);
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: text ? "ok" : "empty", provider: model.provider, model: model.id, outputChars: text.length, usage: isRecord(response.usage) ? response.usage : undefined });
-    if (text && ctx.hasUI) ctx.ui.notify(`Plan advisor: ${text}`, hardBlocked ? "warning" : "info");
+
+    const rawText = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join(" ")
+      .trim()
+      .slice(0, ADVISOR_MAX_OUTPUT_CHARS);
+
+    let verdict: "APPROVE" | "REJECT" = "APPROVE";
+    let reason = rawText;
+
+    if (/^REJECT\b/iu.test(rawText) || /отклон\w*/iu.test(rawText) || /запрещ\w*/iu.test(rawText)) {
+      verdict = "REJECT";
+      reason = rawText.replace(/^REJECT:\s*/iu, "").trim() || rawText;
+    } else if (/^APPROVE\b/iu.test(rawText)) {
+      verdict = "APPROVE";
+      reason = rawText.replace(/^APPROVE:\s*/iu, "").trim() || rawText;
+    }
+
+    const result = { verdict, reason };
+    state.cache.set(check.sha256, result);
+
+    const usageObj = typeof response.usage === "object" && response.usage !== null ? (response.usage as Record<string, unknown>) : undefined;
+
+    await writeReceipt({
+      sessionId,
+      slug: check.slug,
+      sha256: check.sha256,
+      verdict,
+      reason,
+      provider: model.provider,
+      model: model.id,
+      usage: usageObj,
+    });
+
+    if (ctx.hasUI) {
+      ctx.ui.notify(`Plan advisor [${verdict}]: ${reason}`, verdict === "REJECT" ? "warning" : "info");
+    }
+
+    return result;
   } catch (error) {
-    await writeReceipt({ sessionId, kind, key, hardBlocked, llm: "failed", provider: model.provider, model: model.id, error: error instanceof Error ? error.name : String(error) });
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "advisor-failed", error: errorMsg });
+    // Fail-open on advisor crash so deterministic safety is maintained
+    return { verdict: "APPROVE", reason: `Advisor call failed: ${errorMsg}` };
   }
 }
 
 export function createPlanProtectionForTest(dependencies: TestDependencies = {}) {
   const states = new Map<string, SessionState>();
-  const completeImpl = dependencies.complete ?? complete;
   return {
     async handleToolCall(event: { toolName?: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: ExtensionContext): Promise<GuardResult> {
-      const sessionId = sessionIdFrom(ctx);
+      const completeImpl = dependencies.complete ?? activeTestDependencies.complete ?? complete;
+      const sessionId = ctx.sessionManager.getSessionId();
       const state = stateFor(states, sessionId);
+
+      // Trigger ONLY when proposing a plan (Plan Mode Exit / Handoff).
+      // Zero token waste: intermediate tools (todo, read, edit) NEVER call the LLM advisor.
       if (event.toolName === "write" && event.input?.path === PROPOSE_PATH) {
+        // Step 1: Deterministic check (0 tokens)
         const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
         if (!check.ok) {
-          void advise(ctx, state, "invalid-proposal", `${check.code}: ${check.reason}`, true, completeImpl).catch(() => undefined);
           return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
         }
-        void writeReceipt({ sessionId, kind: "proposal-preflight", hardBlocked: false, planUrl: check.planUrl, bytes: check.bytes, sha256: check.sha256 }).catch(() => undefined);
+
+        // Step 2: Read proposed plan artifact from disk
+        const planContent = await fs.readFile(check.planPath, "utf8");
+
+        // Step 3: Run Plan Advisor strictly on the finished plan artifact
+        const review = await reviewProposedPlan(ctx, state, check, planContent, completeImpl);
+
+        if (review.verdict === "REJECT") {
+          return {
+            block: true,
+            reason: `[PLAN_ADVISOR_BLOCK] Советник отклонил план: ${review.reason}`,
+          };
+        }
+
+        // Plan is approved by advisor: allow handoff to human review overlay
+        void writeReceipt({ sessionId, kind: "proposal-approved", slug: check.slug, sha256: check.sha256 }).catch(() => undefined);
         return undefined;
       }
-      if (event.toolName === "todo") {
-        const todoText = JSON.stringify(event.input ?? {});
-        const matched = state.forbiddenTerms.find((term) => todoText.toLowerCase().includes(term.toLowerCase()));
-        if (matched) void advise(ctx, state, "todo-scope-suspicion", `rejected term ${matched} appears in todo update`, false, completeImpl).catch(() => undefined);
-      }
+
+      // All other tool calls pass without touching the advisor
       return undefined;
     },
     async handleAgentStart(event: { prompt?: string }, ctx: ExtensionContext): Promise<void> {
-      stateFor(states, sessionIdFrom(ctx)).forbiddenTerms = extractForbiddenTerms(event.prompt ?? "");
+      stateFor(states, ctx.sessionManager.getSessionId()).userPrompt = event.prompt ?? "";
     },
   };
 }

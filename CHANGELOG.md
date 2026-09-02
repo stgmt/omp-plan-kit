@@ -2,6 +2,32 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.1.0] - 2026-09-03
+
+### Added
+
+- Plan advisor exit-gate: the bounded LLM review now runs strictly at `write xd://propose <slug>` on the completed `local://<slug>-plan.md` artifact, reviewing the exact plan content against the user's objective/constraints.
+- In-session plan-content cache (`SHA-256` of plan body): re-proposing an unchanged plan hits the cache and spends zero additional advisor tokens.
+- Project rule `.omp/rules/tests.md`: concise test discipline — all tests must live in `tests/`.
+
+### Changed
+
+- Advisor trigger moved from intermediate `todo` scope suspicion to the plan handoff boundary. Intermediate planning steps (`todo`, reads, scratch edits) now spend zero advisor tokens.
+- Deterministic syntax errors (malformed slug, traversal, missing artifact) block with `PLAN_HANDOFF_*` and zero advisor invocations, before any model call.
+- Defective plans receive a hard block with `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>` and never reach the OMP human-review overlay; the agent remains in plan mode with corrective feedback.
+- Clean plans approved by the advisor pass through to OMP core dispatch and open the operator review dialog unchanged.
+- Coverage widened to four E2E suites: programmer mutations (8 cases), advisor contract (budget/bounds/cache), real in-process handoff with OMP `dispatchResolutionDevice`, and live native model verification on `openai-codex/gpt-5.6-sol`.
+
+### Removed
+
+- Removed `todo`-as-trigger for the advisor. The old `todo-scope-suspicion` path and its negative-scope regex are deleted.
+
+### Technical
+
+- Refactored `src/extension.ts`: removed tiny wrappers (`sessionIdFrom`, `compact`) and local `isRecord` to follow project lints; consolidated prompt/state handling around `userPrompt` + `cache`.
+- Relocated E2E suites from `scripts/` to `tests/`; `scripts/` now contains only install/uninstall helpers.
+- Added `audit-reports/plan-advisor-exit-gate-2026-09-03.md` with grounded evidence, architecture diagram, and E2E matrix.
+
 ## [1.0.1] - 2026-08-31
 
 ### Maintenance
