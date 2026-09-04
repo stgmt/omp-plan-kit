@@ -5,6 +5,268 @@ import * as fs from "fs/promises";
 import os from "os";
 import path from "path";
 import { complete } from "@oh-my-pi/pi-ai";
+
+// src/plan-validator.ts
+var CANONICAL_SECTIONS = [
+  "Context",
+  "Approach",
+  "Critical files & anchors",
+  "Verification",
+  "Assumptions & contingencies"
+];
+var REQUIRED_SECTIONS = [
+  "Context",
+  "Approach",
+  "Verification"
+];
+function validatePlanStructure(markdown) {
+  if (!markdown || markdown.trim().length === 0) {
+    return [
+      {
+        code: "PLAN_EMPTY",
+        line: 1,
+        message: "Plan file is empty",
+        fix: "Write a complete plan with Context, Approach, and Verification sections."
+      }
+    ];
+  }
+  const lines = markdown.split(/\r?\n/);
+  const issues = [];
+  let inFence = false;
+  let fenceChar = "";
+  let fenceLen = 0;
+  const headings = [];
+  for (let i = 0;i < lines.length; i++) {
+    const line = lines[i];
+    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const char = fenceMatch[2][0];
+      const len = fenceMatch[2].length;
+      if (!inFence) {
+        inFence = true;
+        fenceChar = char;
+        fenceLen = len;
+        continue;
+      } else if (char === fenceChar && len >= fenceLen) {
+        inFence = false;
+        fenceChar = "";
+        fenceLen = 0;
+        continue;
+      }
+    }
+    if (inFence) {
+      continue;
+    }
+    const headingMatch = line.match(/^##\s+(.*?)\s*$/);
+    if (headingMatch) {
+      const title = headingMatch[1].trim();
+      const matchedSection = CANONICAL_SECTIONS.find((s) => s === title);
+      if (matchedSection) {
+        headings.push({ section: matchedSection, line: i + 1 });
+      }
+    }
+  }
+  const occurrencesBySection = new Map;
+  for (const s of CANONICAL_SECTIONS) {
+    occurrencesBySection.set(s, []);
+  }
+  for (const h of headings) {
+    occurrencesBySection.get(h.section).push(h);
+  }
+  for (const req of REQUIRED_SECTIONS) {
+    const occurrences = occurrencesBySection.get(req);
+    if (occurrences.length === 0) {
+      issues.push({
+        code: "SECTION_MISSING",
+        section: req,
+        message: `Required section "${req}" is missing`,
+        fix: `Add "## ${req}" section to the plan.`
+      });
+    }
+  }
+  for (const [section, occurrences] of occurrencesBySection.entries()) {
+    if (occurrences.length > 1) {
+      for (let i = 1;i < occurrences.length; i++) {
+        const extra = occurrences[i];
+        issues.push({
+          code: "SECTION_DUPLICATE",
+          section,
+          line: extra.line,
+          message: `Duplicate section "${section}" at line ${extra.line}`,
+          fix: `Remove duplicate "## ${section}" heading and consolidate content under the primary section at line ${occurrences[0].line}.`
+        });
+      }
+    }
+  }
+  for (const [section, occurrences] of occurrencesBySection.entries()) {
+    if (occurrences.length === 0) {
+      continue;
+    }
+    const primary = occurrences[0];
+    const startIndex = primary.line;
+    let nextHeadingLine = lines.length + 1;
+    for (const h of headings) {
+      if (h.line > primary.line && h.line < nextHeadingLine) {
+        nextHeadingLine = h.line;
+      }
+    }
+    const endIndex = nextHeadingLine - 1;
+    let hasContent = false;
+    for (let idx = startIndex;idx < endIndex; idx++) {
+      if (lines[idx].trim().length > 0) {
+        hasContent = true;
+        break;
+      }
+    }
+    if (!hasContent) {
+      issues.push({
+        code: "SECTION_EMPTY",
+        section,
+        line: primary.line,
+        message: `Section "${section}" at line ${primary.line} is empty`,
+        fix: `Add content to "## ${section}".`
+      });
+    }
+  }
+  const primaryBySection = new Map;
+  for (const [section, occurrences] of occurrencesBySection.entries()) {
+    if (occurrences.length > 0) {
+      primaryBySection.set(section, occurrences[0].line);
+    }
+  }
+  const contextLine = primaryBySection.get("Context");
+  const approachLine = primaryBySection.get("Approach");
+  const anchorsLine = primaryBySection.get("Critical files & anchors");
+  const verificationLine = primaryBySection.get("Verification");
+  const assumptionsLine = primaryBySection.get("Assumptions & contingencies");
+  if (contextLine !== undefined) {
+    if (approachLine !== undefined && contextLine > approachLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Context",
+        line: contextLine,
+        message: `Section "Context" at line ${contextLine} is out of order (must appear before "Approach")`,
+        fix: `Move "## Context" before "## Approach".`
+      });
+    } else if (anchorsLine !== undefined && contextLine > anchorsLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Context",
+        line: contextLine,
+        message: `Section "Context" at line ${contextLine} is out of order (must appear before "Critical files & anchors")`,
+        fix: `Move "## Context" before "## Critical files & anchors".`
+      });
+    } else if (verificationLine !== undefined && contextLine > verificationLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Context",
+        line: contextLine,
+        message: `Section "Context" at line ${contextLine} is out of order (must appear before "Verification")`,
+        fix: `Move "## Context" before "## Verification".`
+      });
+    } else if (assumptionsLine !== undefined && contextLine > assumptionsLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Context",
+        line: contextLine,
+        message: `Section "Context" at line ${contextLine} is out of order (must appear before "Assumptions & contingencies")`,
+        fix: `Move "## Context" before "## Assumptions & contingencies".`
+      });
+    }
+  }
+  if (approachLine !== undefined) {
+    if (verificationLine !== undefined && approachLine > verificationLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Approach",
+        line: approachLine,
+        message: `Section "Approach" at line ${approachLine} is out of order (must appear before "Verification")`,
+        fix: `Move "## Approach" before "## Verification".`
+      });
+    } else if (assumptionsLine !== undefined && approachLine > assumptionsLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Approach",
+        line: approachLine,
+        message: `Section "Approach" at line ${approachLine} is out of order (must appear before "Assumptions & contingencies")`,
+        fix: `Move "## Approach" before "## Assumptions & contingencies".`
+      });
+    }
+  }
+  if (anchorsLine !== undefined) {
+    if (approachLine !== undefined && anchorsLine < approachLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Critical files & anchors",
+        line: anchorsLine,
+        message: `Section "Critical files & anchors" at line ${anchorsLine} is out of order (must appear after "Approach")`,
+        fix: `Move "## Critical files & anchors" after "## Approach".`
+      });
+    } else if (verificationLine !== undefined && anchorsLine > verificationLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Critical files & anchors",
+        line: anchorsLine,
+        message: `Section "Critical files & anchors" at line ${anchorsLine} is out of order (must appear before "Verification")`,
+        fix: `Move "## Critical files & anchors" before "## Verification".`
+      });
+    }
+  }
+  if (assumptionsLine !== undefined) {
+    if (verificationLine !== undefined && assumptionsLine < verificationLine) {
+      issues.push({
+        code: "SECTION_ORDER",
+        section: "Assumptions & contingencies",
+        line: assumptionsLine,
+        message: `Section "Assumptions & contingencies" at line ${assumptionsLine} is out of order (must appear after "Verification")`,
+        fix: `Move "## Assumptions & contingencies" after "## Verification".`
+      });
+    }
+  }
+  issues.sort((a, b) => {
+    const lineA = a.line ?? 0;
+    const lineB = b.line ?? 0;
+    if (lineA !== lineB) {
+      return lineA - lineB;
+    }
+    const codeCmp = a.code.localeCompare(b.code);
+    if (codeCmp !== 0) {
+      return codeCmp;
+    }
+    const secA = a.section ?? "";
+    const secB = b.section ?? "";
+    return secA.localeCompare(secB);
+  });
+  return issues;
+}
+function issueSignature(issues) {
+  if (issues.length === 0) {
+    return "";
+  }
+  const pairs = issues.map((issue) => `${issue.code}:${issue.section ?? ""}`);
+  pairs.sort((a, b) => a.localeCompare(b));
+  return pairs.join(";");
+}
+function formatRepairPacket(slug, issues, attempt, maxAttempts) {
+  const lines = [
+    `[PLAN_VALIDATOR_BLOCK] Plan validation failed (Attempt ${attempt} of ${maxAttempts}):`,
+    ""
+  ];
+  issues.forEach((issue, idx) => {
+    const loc = [
+      issue.section,
+      issue.line !== undefined ? `line ${issue.line}` : undefined
+    ].filter(Boolean).join(", ");
+    const prefix = loc ? `${loc}: ` : "";
+    lines.push(`${idx + 1}. [${issue.code}] ${prefix}${issue.message}. Fix: ${issue.fix}`);
+  });
+  lines.push("");
+  lines.push(`Fix every issue above in local://${slug}-plan.md, keep the same slug, reread the complete plan, and do not call xd://propose until all listed issues are fixed.`);
+  return lines.join(`
+`);
+}
+
+// src/extension.ts
 var PROPOSE_PATH = "xd://propose";
 var PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
 var LOCAL_ROOT = path.join(os.tmpdir(), "omp-local");
@@ -15,6 +277,10 @@ var ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS
 var ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 15000, 500, 60000);
 var ADVISOR_MAX_TOKENS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_TOKENS, 160, 32, 256);
 var ADVISOR_MAX_OUTPUT_CHARS = 600;
+var MAX_FAILED_VALIDATIONS = 3;
+var MAX_SAME_HASH_REPEATS = 2;
+var MAX_NO_PROGRESS_ATTEMPTS = 2;
+var MAX_TURN_PROPOSALS = 4;
 var activeTestDependencies = {};
 function setTestDependencies(deps) {
   activeTestDependencies = deps;
@@ -27,7 +293,18 @@ function stateFor(states, sessionId) {
   const existing = states.get(sessionId);
   if (existing)
     return existing;
-  const created = { userPrompt: "", calls: 0, lastCallAt: 0, cache: new Map };
+  const created = {
+    userPrompt: "",
+    calls: 0,
+    lastCallAt: 0,
+    cache: new Map,
+    turnState: {
+      turnId: 0,
+      proposalCount: 0,
+      blocked: false,
+      cyclesBySlug: new Map
+    }
+  };
   states.set(sessionId, created);
   return created;
 }
@@ -85,7 +362,11 @@ async function preflightProposal(payload, sessionId, options) {
     const bytes = await fs.readFile(planPath);
     return { ok: true, ...parsed, planPath, bytes: bytes.byteLength, sha256: crypto.createHash("sha256").update(bytes).digest("hex") };
   } catch {
-    return { ok: false, code: "PLAN_FILE_MISSING", reason: `exact plan artifact is missing: ${parsed.planUrl}; fallback is disabled` };
+    return {
+      ok: false,
+      code: "PLAN_FILE_MISSING",
+      reason: `exact plan artifact is missing: ${parsed.planUrl}; fallback is disabled. If the plan file was written in the same tool-call batch as xd://propose, call xd://propose in a separate subsequent turn because OMP executes all tool_call hooks before writing files`
+    };
   }
 }
 async function writeReceipt(data) {
@@ -192,14 +473,159 @@ function createPlanProtectionForTest(dependencies = {}) {
   return {
     async handleToolCall(event, ctx) {
       const completeImpl = dependencies.complete ?? activeTestDependencies.complete ?? complete;
+      const validatePlanImpl = dependencies.validatePlan ?? activeTestDependencies.validatePlan ?? validatePlanStructure;
       const sessionId = ctx.sessionManager.getSessionId();
       const state = stateFor(states, sessionId);
       if (event.toolName === "write" && event.input?.path === PROPOSE_PATH) {
+        const turn = state.turnState;
+        if (turn.blocked) {
+          return {
+            block: true,
+            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Wait for user feedback or native Refine."
+          };
+        }
+        turn.proposalCount += 1;
+        if (turn.proposalCount > MAX_TURN_PROPOSALS) {
+          turn.blocked = true;
+          return {
+            block: true,
+            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback or native Refine."
+          };
+        }
         const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
         if (!check.ok) {
           return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
         }
         const planContent = await fs.readFile(check.planPath, "utf8");
+        let cycle = turn.cyclesBySlug.get(check.slug);
+        if (!cycle) {
+          cycle = {
+            failedAttempts: 0,
+            lastIssues: [],
+            sameHashCount: 0,
+            noProgressCount: 0,
+            blocked: false
+          };
+          turn.cyclesBySlug.set(check.slug, cycle);
+        }
+        if (cycle.blocked) {
+          return {
+            block: true,
+            reason: "[PLAN_VALIDATOR_BLOCKED] Automatic repair is stopped for this user turn. Do not call xd://propose again; wait for user feedback or native Refine."
+          };
+        }
+        if (cycle.lastSha256 && check.sha256 === cycle.lastSha256) {
+          cycle.failedAttempts += 1;
+          cycle.sameHashCount += 1;
+          if (cycle.sameHashCount >= MAX_SAME_HASH_REPEATS || cycle.failedAttempts >= MAX_FAILED_VALIDATIONS) {
+            cycle.blocked = true;
+            if (ctx.hasUI) {
+              ctx.ui.notify(`Plan validation stopped for "${check.slug}": repeated unchanged plan without repair`, "error");
+            }
+            await writeReceipt({
+              sessionId,
+              kind: "VALIDATOR_STOPPED",
+              slug: check.slug,
+              sha256: check.sha256,
+              attempt: cycle.failedAttempts,
+              reason: "SAME_HASH_LIMIT_REACHED",
+              issueCount: cycle.lastIssues.length,
+              issues: cycle.lastIssues.map((i) => i.code)
+            });
+            return {
+              block: true,
+              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Plan file was repeated without changes (${cycle.sameHashCount} times). Do not call xd://propose again; wait for user feedback or native Refine. Remaining issues:
+
+${formatRepairPacket(check.slug, cycle.lastIssues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`
+            };
+          }
+          await writeReceipt({
+            sessionId,
+            kind: "VALIDATOR_REJECT",
+            slug: check.slug,
+            sha256: check.sha256,
+            attempt: cycle.failedAttempts,
+            reason: "PLAN_FILE_UNCHANGED",
+            issueCount: cycle.lastIssues.length,
+            issues: cycle.lastIssues.map((i) => i.code)
+          });
+          return {
+            block: true,
+            reason: `[PLAN_VALIDATOR_BLOCK] Plan file is unchanged in local://${check.slug}-plan.md (Attempt ${cycle.failedAttempts} of ${MAX_FAILED_VALIDATIONS}). Previous validation issues remain:
+
+${formatRepairPacket(check.slug, cycle.lastIssues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`
+          };
+        }
+        let issues;
+        try {
+          issues = validatePlanImpl(planContent);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await writeReceipt({
+            sessionId,
+            kind: "VALIDATOR_INTERNAL_ERROR",
+            slug: check.slug,
+            sha256: check.sha256,
+            error: errMsg
+          });
+          return {
+            block: true,
+            reason: `[PLAN_VALIDATOR_INTERNAL_ERROR] Plan handoff is blocked because deterministic validation failed internally: ${errMsg}`
+          };
+        }
+        if (issues.length > 0) {
+          cycle.failedAttempts += 1;
+          const signature = issueSignature(issues);
+          const prevCount = cycle.lastIssueCount;
+          const prevSignature = cycle.lastIssueSignature;
+          if (prevCount !== undefined && issues.length < prevCount && signature !== prevSignature) {
+            cycle.sameHashCount = 0;
+            cycle.noProgressCount = 0;
+          } else if (prevCount !== undefined) {
+            cycle.noProgressCount += 1;
+          }
+          cycle.lastSha256 = check.sha256;
+          cycle.lastIssueSignature = signature;
+          cycle.lastIssueCount = issues.length;
+          cycle.lastIssues = [...issues];
+          const limitReached = cycle.failedAttempts >= MAX_FAILED_VALIDATIONS || cycle.noProgressCount >= MAX_NO_PROGRESS_ATTEMPTS;
+          if (limitReached) {
+            cycle.blocked = true;
+            if (ctx.hasUI) {
+              ctx.ui.notify(`Plan validation stopped for "${check.slug}": limit reached without convergence`, "error");
+            }
+            await writeReceipt({
+              sessionId,
+              kind: "VALIDATOR_STOPPED",
+              slug: check.slug,
+              sha256: check.sha256,
+              attempt: cycle.failedAttempts,
+              issueCount: issues.length,
+              issues: issues.map((i) => i.code),
+              noProgressCount: cycle.noProgressCount
+            });
+            return {
+              block: true,
+              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Maximum repair attempts or no-progress limit reached (${cycle.failedAttempts} attempts, ${cycle.noProgressCount} no-progress iterations). Do not call xd://propose again; wait for user feedback or native Refine. Remaining issues:
+
+${formatRepairPacket(check.slug, issues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`
+            };
+          }
+          await writeReceipt({
+            sessionId,
+            kind: "VALIDATOR_REJECT",
+            slug: check.slug,
+            sha256: check.sha256,
+            attempt: cycle.failedAttempts,
+            issueCount: issues.length,
+            issues: issues.map((i) => i.code)
+          });
+          return {
+            block: true,
+            reason: formatRepairPacket(check.slug, issues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)
+          };
+        }
+        turn.cyclesBySlug.delete(check.slug);
         const review = await reviewProposedPlan(ctx, state, check, planContent, completeImpl);
         if (review.verdict === "REJECT") {
           return {
@@ -215,7 +641,12 @@ function createPlanProtectionForTest(dependencies = {}) {
       return;
     },
     async handleAgentStart(event, ctx) {
-      stateFor(states, ctx.sessionManager.getSessionId()).userPrompt = event.prompt ?? "";
+      const state = stateFor(states, ctx.sessionManager.getSessionId());
+      state.userPrompt = event.prompt ?? "";
+      state.turnState.turnId += 1;
+      state.turnState.proposalCount = 0;
+      state.turnState.blocked = false;
+      state.turnState.cyclesBySlug.clear();
     }
   };
 }
@@ -226,7 +657,10 @@ function planProtection(pi) {
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));
 }
 export {
+  validatePlanStructure,
   setTestDependencies,
+  issueSignature,
+  formatRepairPacket,
   planProtection as default,
   createPlanProtectionForTest
 };

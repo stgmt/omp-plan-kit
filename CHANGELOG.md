@@ -2,6 +2,27 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.2.0] - 2026-09-04
+
+### Added
+
+- Deterministic batch plan validator (`src/plan-validator.ts`): parses Markdown `##` headings outside code fences, enforces canonical sections (`Context`, `Approach`, `Verification` in order; optional `Critical files & anchors` and `Assumptions & contingencies`), suppresses dependent errors, and returns all independent issues in a structured repair packet.
+- Convergence controller (`src/extension.ts`): tracks progress across proposals, distinguishing real issue reduction from hash churn, and enforces deterministic limits to eliminate infinite repair loops:
+  - `MAX_FAILED_VALIDATIONS = 3`: maximum 3 failed validation attempts per slug;
+  - `MAX_SAME_HASH_REPEATS = 2`: maximum 2 repeated proposals of an unchanged invalid plan;
+  - `MAX_NO_PROGRESS_ATTEMPTS = 2`: maximum 2 consecutive proposals without decreasing issue count;
+  - `MAX_TURN_PROPOSALS = 4`: maximum 4 proposals per turn across all slugs before turn-blocking (`[PLAN_VALIDATOR_TURN_BLOCKED]`).
+- Sticky turn latch: preserves rich `[PLAN_VALIDATOR_STOPPED]` diagnostics in the model transcript without calling `ctx.abort()` (which would overwrite the failure reason with a generic abort error), while making all subsequent attempts in the turn fail fast in $O(1)$ without re-running the validator or advisor.
+- Fresh turn budget reset: new user prompt or native `Refine plan` (`before_agent_start`) increments `turnId`, clears latches and cycles, and grants a fresh repair budget.
+- Test suites: `tests/e2e-plan-validator.mjs` (unit + integration coverage for empty, missing, duplicate, order, fence, and minimal plans) and `tests/e2e-convergence-controller.mjs` (progress detection, churn cutoff, repeat cutoff, slug hopping, and turn reset).
+
+### Changed
+
+- Pipeline ordering: exact preflight → plan validator & convergence → advisor review → native OMP review overlay. Structurally invalid plans never invoke the LLM advisor, saving 100% of advisor tokens on malformed plans.
+- Preflight failure reason for `PLAN_FILE_MISSING` clarifies OMP's batch tool-call execution semantics (all `tool_call` hooks fire before any tool writes files to disk), requiring separate turns for plan writing and `xd://propose`.
+- Updated test fixtures in `tests/e2e-advisor-contract.mjs`, `tests/e2e-real-plan-handoff.mjs`, `tests/e2e-programmer.mjs`, and `tests/e2e-advisor-live.mjs` to conform to the structural plan contract.
+- Maintained strict compatibility with `engines.omp >=17.3.7`.
+
 ## [1.1.0] - 2026-09-03
 
 ### Added

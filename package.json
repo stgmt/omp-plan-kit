@@ -1,7 +1,7 @@
 {
   "name": "omp-plan-kit",
-  "version": "1.1.0",
-  "description": "Global Oh My Pi (OMP) plan kit starting with deterministic stale-plan protection and bounded native review.",
+  "version": "1.2.0",
+  "description": "Global Oh My Pi (OMP) plan kit with deterministic plan validation and bounded repair convergence.",
   "author": "stgmt",
   "homepage": "https://github.com/stgmt/omp-plan-kit#readme",
   "repository": {
@@ -39,14 +39,16 @@
     ]
   },
   "scripts": {
-    "check": "node --check src/extension.ts && node --check dist/extension.js && node --check scripts/install-all-profiles.mjs && node --check scripts/uninstall-all-profiles.mjs && node --check tests/e2e-programmer.mjs && node --check tests/e2e-advisor-contract.mjs && node --check tests/e2e-advisor-live.mjs && node --check tests/e2e-real-plan-handoff.mjs",
+    "check": "node --check src/extension.ts && node --check src/plan-validator.ts && node --check dist/extension.js && node --check scripts/install-all-profiles.mjs && node --check scripts/uninstall-all-profiles.mjs && node --check tests/e2e-plan-validator.mjs && node --check tests/e2e-convergence-controller.mjs && node --check tests/e2e-programmer.mjs && node --check tests/e2e-advisor-contract.mjs && node --check tests/e2e-advisor-live.mjs && node --check tests/e2e-real-plan-handoff.mjs",
     "build": "bun build src/extension.ts --outfile dist/extension.js --target bun --format esm --external @oh-my-pi/pi-ai",
     "install-global": "node scripts/install-all-profiles.mjs",
     "uninstall-global": "node scripts/uninstall-all-profiles.mjs",
+    "e2e:validator": "bun tests/e2e-plan-validator.mjs",
+    "e2e:convergence": "bun tests/e2e-convergence-controller.mjs",
     "e2e:programmer": "bun tests/e2e-programmer.mjs",
     "e2e:advisor": "bun tests/e2e-advisor-contract.mjs",
     "e2e:advisor:live": "bun tests/e2e-advisor-live.mjs",
     "e2e:handoff": "bun tests/e2e-real-plan-handoff.mjs",
-    "e2e:all": "bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs"
+    "e2e:all": "bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs"
   }
 }

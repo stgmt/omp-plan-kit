@@ -64,6 +64,11 @@ async function main() {
   const discovery = [];
   for (const agentDir of roots) {
     const pluginDir = path.join(path.dirname(agentDir), "plugins", "node_modules", "omp-plan-kit");
+    try {
+      await fs.stat(path.join(pluginDir, "package.json"));
+    } catch {
+      continue;
+    }
     const manifest = JSON.parse(await fs.readFile(path.join(pluginDir, "package.json"), "utf8"));
     const extension = path.join(pluginDir, "dist", "extension.js");
     await fs.stat(extension);
@@ -91,11 +96,14 @@ async function main() {
     ui: { notify() {} },
   };
   await fs.mkdir(localRoot, { recursive: true });
+
   try {
     await fs.writeFile(path.join(localRoot, "old-plan.md"), "# Old\nOLD_PLAN_MARKER\n", "utf8");
     const mutationCases = [
       { name: "full-markdown", content: "# Plan: new plan\n\nStep: use a/path", code: "NON_SLUG_PAYLOAD" },
       { name: "empty", content: "", code: "NON_SLUG_PAYLOAD" },
+      { name: "trailing-whitespace", content: "new ", code: "NON_SLUG_PAYLOAD" },
+      { name: "leading-whitespace", content: " new", code: "NON_SLUG_PAYLOAD" },
       { name: "surrounding-whitespace", content: " new ", code: "NON_SLUG_PAYLOAD" },
       { name: "path-traversal", content: "../old", code: "NON_SLUG_PAYLOAD" },
       { name: "missing-exact-artifact", content: "missing", code: "PLAN_FILE_MISSING" },
@@ -116,7 +124,15 @@ async function main() {
     const unguarded = await dispatchResolutionDevice(makeSession(localRoot, sessionId), "propose", badBody);
     assert.equal(unguarded.xdev.inner.planFilePath, "local://old-plan.md", "unprotected OMP path selected the stale plan");
 
-    await fs.writeFile(path.join(localRoot, "new-plan.md"), "# New\nNEW_PLAN_MARKER\n", "utf8");
+    const validNewPlan = [
+      "## Context",
+      "New plan context description.",
+      "## Approach",
+      "NEW_PLAN_MARKER: Implementation details.",
+      "## Verification",
+      "Verification commands.",
+    ].join("\n");
+    await fs.writeFile(path.join(localRoot, "new-plan.md"), validNewPlan, "utf8");
     const allowed = await handlers[0]({ toolName: "write", toolCallId: "good", input: { path: "xd://propose", content: "new" } }, context);
     assert.equal(allowed, undefined, "exact slug with exact artifact must pass");
     const guarded = await dispatchResolutionDevice(makeSession(localRoot, sessionId), "propose", "new");
@@ -143,7 +159,4 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+await main();

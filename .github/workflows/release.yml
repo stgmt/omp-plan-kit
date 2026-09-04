@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build and verify (commit SHA, branch, or tag)"
+        required: true
+        type: string
+      publish:
+        description: "Whether to publish GitHub Release and create tag"
+        required: false
+        default: false
+        type: boolean
+      tag:
+        description: "Release tag (e.g. v1.2.0), required if publish is true"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Verify package version and release notes
+        id: meta
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          ASSET_NAME="omp-plan-kit-${VERSION}.tgz"
+          echo "asset_name=${ASSET_NAME}" >> $GITHUB_OUTPUT
+
+          NOTES_FILE="audit-reports/v${VERSION}-release-notes.md"
+          if [ ! -f "${NOTES_FILE}" ]; then
+            echo "::error::Release notes file ${NOTES_FILE} does not exist!"
+            exit 1
+          fi
+          echo "notes_file=${NOTES_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Build reproducibility check and test suite
+        run: |
+          COMMITTED_SHA=$(sha256sum dist/extension.js | cut -d' ' -f1)
+          echo "Committed dist/extension.js SHA-256: ${COMMITTED_SHA}"
+
+          bun run build
+          REBUILT_SHA=$(sha256sum dist/extension.js | cut -d' ' -f1)
+          echo "Rebuilt dist/extension.js SHA-256: ${REBUILT_SHA}"
+
+          if [ "${COMMITTED_SHA}" != "${REBUILT_SHA}" ]; then
+            echo "::error::dist/extension.js rebuild mismatch! Committed: ${COMMITTED_SHA}, Rebuilt: ${REBUILT_SHA}"
+            exit 1
+          fi
+
+          npm run check
+
+      - name: Package archive
+        id: pack
+        run: |
+          mkdir -p release
+          npm pack --pack-destination release
+          ARCHIVE_PATH="release/${{ steps.meta.outputs.asset_name }}"
+          if [ ! -f "${ARCHIVE_PATH}" ]; then
+            echo "::error::Expected archive ${ARCHIVE_PATH} was not produced!"
+            exit 1
+          fi
+
+          CONTENTS=$(tar -tf "${ARCHIVE_PATH}" | sort)
+          EXPECTED=$(printf "package/LICENSE\npackage/README.md\npackage/dist/extension.js\npackage/package.json")
+          echo "Archive contents:"
+          echo "${CONTENTS}"
+
+          if [ "${CONTENTS}" != "${EXPECTED}" ]; then
+            echo "::error::Archive contains unexpected files! Expected exactly package/{LICENSE,README.md,package.json,dist/extension.js}"
+            exit 1
+          fi
+
+          ARCHIVE_SHA=$(sha256sum "${ARCHIVE_PATH}" | cut -d' ' -f1)
+          echo "archive_path=${ARCHIVE_PATH}" >> $GITHUB_OUTPUT
+          echo "archive_sha=${ARCHIVE_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Attest artifact
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.pack.outputs.archive_path }}
+
+      - name: Verify attestation
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify "${{ steps.pack.outputs.archive_path }}" --repo stgmt/omp-plan-kit
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.asset_name }}
+          path: ${{ steps.pack.outputs.archive_path }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.publish }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          INPUT_TAG="${{ inputs.tag }}"
+          EXPECTED_TAG="v${{ steps.meta.outputs.version }}"
+          if [ -z "${INPUT_TAG}" ]; then
+            echo "::error::tag input is required when publish=true"
+            exit 1
+          fi
+          if [ "${INPUT_TAG}" != "${EXPECTED_TAG}" ]; then
+            echo "::error::Tag input '${INPUT_TAG}' does not match expected '${EXPECTED_TAG}'"
+            exit 1
+          fi
+
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          echo "HEAD commit: ${HEAD_COMMIT}"
+
+          # Verify commit is on origin/main
+          git fetch origin main
+          MAIN_TIP=$(git rev-parse origin/main)
+          if ! git merge-base --is-ancestor "${HEAD_COMMIT}" origin/main; then
+            echo "::error::Commit ${HEAD_COMMIT} is not in origin/main!"
+            exit 1
+          fi
+
+          # Check if release already exists
+          if gh release view "${INPUT_TAG}" >/dev/null 2>&1; then
+            echo "Release ${INPUT_TAG} already exists. Checking idempotency..."
+            PEELED_TAG_COMMIT=$(git rev-parse "${INPUT_TAG}^{commit}" 2>/dev/null || echo "")
+
+            if [ -n "${PEELED_TAG_COMMIT}" ] && [ "${PEELED_TAG_COMMIT}" != "${HEAD_COMMIT}" ]; then
+              echo "::error::Existing release tag points to commit ${PEELED_TAG_COMMIT}, but current HEAD is ${HEAD_COMMIT}!"
+              exit 1
+            fi
+
+            echo "Existing release asset check passed idempotently."
+          else
+            echo "Creating release ${INPUT_TAG}..."
+            gh release create "${INPUT_TAG}" \
+              "${{ steps.pack.outputs.archive_path }}" \
+              --target main \
+              --title "OMP Plan Kit ${INPUT_TAG}" \
+              --notes-file "${{ steps.meta.outputs.notes_file }}"
+            echo "Release ${INPUT_TAG} created successfully."
+          fi

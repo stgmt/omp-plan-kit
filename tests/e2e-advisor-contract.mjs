@@ -19,7 +19,7 @@ const requests = [];
 const completeFake = async (model, request, options) => {
   requests.push({ model, request, options });
   const prompt = request.messages[0].content[0].text;
-  if (prompt.includes("bad-plan")) {
+  if (prompt.toLowerCase().includes("bad-plan")) {
     return { content: [{ type: "text", text: "REJECT: План затрагивает запрещённый upstream OMP компонент." }], usage: { input_tokens: 80, output_tokens: 15 } };
   }
   return { content: [{ type: "text", text: "APPROVE: План проверен, задачи корректны." }], usage: { input_tokens: 75, output_tokens: 12 } };
@@ -57,16 +57,45 @@ try {
   for (let attempt = 0; attempt < 10; attempt += 1) await Promise.resolve();
   assert.equal(requests.length, 0, "todo operations during planning must never trigger the advisor");
 
-  // Test 3: Proposal of a defective plan artifact -> PLAN ADVISOR RUNS and BLOCKS
-  await fs.writeFile(path.join(localRoot, "bad-plan.md"), "# Bad Plan\nStep 1: add upstream patch.\n", "utf8");
+  // Test 2b: Structurally invalid plan must block deterministically with ZERO advisor calls
+  await fs.writeFile(path.join(localRoot, "structurally-invalid-plan.md"), "# Bad Plan\nNo sections\n", "utf8");
+  const structBlock = await policy.handleToolCall({
+    toolName: "write",
+    toolCallId: "propose-struct-bad",
+    input: { path: "xd://propose", content: "structurally-invalid" },
+  }, context);
+  assert.equal(structBlock?.block, true);
+  assert.match(structBlock.reason, /PLAN_VALIDATOR_BLOCK/);
+  assert.equal(requests.length, 0, "Structurally invalid plan must never reach advisor");
+
+  // Test 3: Proposal of a defective plan artifact (structurally valid, but advisory defect) -> PLAN ADVISOR RUNS and BLOCKS
+  const badPlanContent = [
+    "# bad-plan",
+    "## Context",
+    "Targeting upstream OMP core internals.",
+    "## Approach",
+    "Step 1: add upstream patch.",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "bad-plan.md"), badPlanContent, "utf8");
   const advisorBlock = await policy.handleToolCall({ toolName: "write", toolCallId: "propose-bad", input: { path: "xd://propose", content: "bad" } }, context);
   await waitForRequests(1);
   assert.equal(advisorBlock?.block, true, "Plan Advisor must return a hard block for defective plan");
   assert.match(advisorBlock.reason, /PLAN_ADVISOR_BLOCK/, "Block reason must cite PLAN_ADVISOR_BLOCK");
   assert.match(advisorBlock.reason, /upstream/iu, "Block reason must cite advisor rejection critique");
 
-  // Test 4: Proposal of a clean plan -> PLAN ADVISOR RUNS and APPROVES
-  await fs.writeFile(path.join(localRoot, "clean-plan.md"), "# Clean Plan\nStep 1: implement safe feature within project.\n", "utf8");
+  // Test 4: Proposal of a clean plan (structurally valid and safe) -> PLAN ADVISOR RUNS and APPROVES
+  const cleanPlanContent = [
+    "# clean-plan",
+    "## Context",
+    "Safe in-tree project enhancement.",
+    "## Approach",
+    "Step 1: implement safe feature within project.",
+    "## Verification",
+    "Run tests within project.",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "clean-plan.md"), cleanPlanContent, "utf8");
   const allowed = await policy.handleToolCall({ toolName: "write", toolCallId: "propose-clean", input: { path: "xd://propose", content: "clean" } }, context);
   await waitForRequests(2);
   assert.equal(allowed, undefined, "clean proposal must pass after advisor approval");
@@ -93,6 +122,7 @@ try {
     features: {
       zeroWasteOnSyntaxError: true,
       zeroWasteOnTodo: true,
+      zeroWasteOnStructuralError: true,
       planAdvisorRanOnDefectivePlan: true,
       planAdvisorBlockedHandoff: true,
       planAdvisorRanOnCleanPlan: true,

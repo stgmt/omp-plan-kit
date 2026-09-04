@@ -22,16 +22,20 @@ const extensionModule = await import(pathToFileURL(installedExtension).href);
 const advisorCalls = [];
 const mockComplete = async (model, request, options) => {
   advisorCalls.push({ model, request, options });
-  const userText = request.messages[0].content[0].text;
-  if (userText.includes("bad-feature")) {
+  const promptText = request.messages[0].content[0].text;
+
+  // The advisor rejects plans attempting to touch upstream core OMP components
+  if (promptText.toLowerCase().includes("upstream omp")) {
     return {
-      content: [{ type: "text", text: "REJECT: План затрагивает системный код OMP. Реализуйте изменения локально в плагине." }],
-      usage: { input_tokens: 140, output_tokens: 25 },
+      content: [{ type: "text", text: "REJECT: План затрагивает запрещённый upstream OMP компонент." }],
+      usage: { input_tokens: 85, output_tokens: 18 },
     };
   }
+
+  // Otherwise, the advisor approves
   return {
-    content: [{ type: "text", text: "APPROVE: План проверен, все задачи ограничены проектом, есть верификация." }],
-    usage: { input_tokens: 120, output_tokens: 18 },
+    content: [{ type: "text", text: "APPROVE: План проверен, задачи корректны." }],
+    usage: { input_tokens: 80, output_tokens: 12 },
   };
 };
 
@@ -56,19 +60,27 @@ await fs.mkdir(localRoot, { recursive: true });
 const notifications = [];
 const context = {
   sessionManager: { getSessionId: () => sessionId },
-  localProtocolOptions: { getArtifactsDir: () => artifactsDir, getSessionId: () => sessionId },
   hasUI: true,
   ui: {
-    notify(message, level) {
-      notifications.push({ message, level });
+    notify(message, type) {
+      notifications.push({ message, type });
     },
   },
   models: {
-    resolve() { return { provider: "test", id: "test-advisor-model" }; },
-    current() { return { provider: "test", id: "test-advisor-model" }; },
+    resolve() {
+      return { provider: "test", id: "test-advisor" };
+    },
+    current() {
+      return undefined;
+    },
   },
   modelRegistry: {
-    async getApiKey() { return "test-api-key"; },
+    async getApiKey() {
+      return "test-api-key";
+    },
+  },
+  localProtocolOptions: {
+    getArtifactsDir: () => artifactsDir,
   },
 };
 
@@ -82,11 +94,15 @@ const ompSession = {
       statePlanFilePath: "local://old-draft-plan.md",
       readPlan: async (url) => {
         const rel = url.replace(/^local:\/\//u, "");
-        try { return await fs.readFile(path.join(localRoot, rel), "utf8"); } catch { return null; }
+        try {
+          return await fs.readFile(path.join(localRoot, rel), "utf8");
+        } catch {
+          return null;
+        }
       },
       listPlanFiles: async () => {
         const files = await fs.readdir(localRoot);
-        return files.filter(f => f.endsWith("-plan.md")).map(f => `local://${f}`);
+        return files.filter((f) => f.endsWith("-plan.md")).map((f) => `local://${f}`);
       },
     });
     coreSelectedPlan = resolved.planFilePath;
@@ -114,12 +130,38 @@ try {
   assert.equal(advisorCalls.length, 0, "Advisor must NEVER run during intermediate planning turns");
   assert.equal(notifications.length, 0, "No notifications during intermediate planning");
 
-  // Phase 3: Agent drafts a DEFECTIVE plan
+  // Phase 2b: Structurally invalid plan is blocked by validator before advisor or core dispatch
   await fs.writeFile(
-    path.join(localRoot, "bad-feature-plan.md"),
-    "# Bad Feature Plan\n\n## Implementation\nPatch upstream OMP to bypass guards.\n",
+    path.join(localRoot, "invalid-structure-plan.md"),
+    "# Invalid Plan\nMissing Context, Approach, Verification\n",
     "utf8",
   );
+  dispatchedToCore = false;
+  coreSelectedPlan = null;
+
+  const structBlockResult = await toolHandler({
+    toolName: "write",
+    toolCallId: "propose-invalid-struct",
+    input: { path: "xd://propose", content: "invalid-structure" },
+  }, context);
+
+  assert.equal(structBlockResult?.block, true);
+  assert.match(structBlockResult.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
+  assert.equal(advisorCalls.length, 0, "Structurally invalid plan must NEVER invoke advisor");
+  assert.equal(dispatchedToCore, false, "Structurally invalid plan must never reach core dispatch");
+  assert.equal(coreSelectedPlan, null, "Human review dialog must not open for invalid plan");
+
+  // Phase 3: Agent drafts a DEFECTIVE plan (structurally valid, but violates safety rules)
+  const badFeatureContent = [
+    "# Bad Feature Plan",
+    "## Context",
+    "Modifying upstream OMP components.",
+    "## Approach",
+    "Patch upstream OMP to bypass guards.",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "bad-feature-plan.md"), badFeatureContent, "utf8");
 
   // Agent attempts to exit plan mode via write xd://propose bad-feature
   dispatchedToCore = false;
@@ -132,19 +174,24 @@ try {
   }, context);
 
   // Assert advisor ACTUALLY RAN on this proposal!
-  assert.equal(advisorCalls.length, 1, "Advisor MUST execute exactly once when a plan is proposed");
+  assert.equal(advisorCalls.length, 1, "Advisor MUST execute exactly once when structurally valid plan is proposed");
   assert.equal(blockedResult?.block, true, "Defective proposal MUST be blocked by advisor");
   assert.match(blockedResult.reason, /\[PLAN_ADVISOR_BLOCK\]/, "Must contain [PLAN_ADVISOR_BLOCK]");
   assert.match(blockedResult.reason, /OMP/iu, "Must cite advisor rejection reason");
   assert.equal(dispatchedToCore, false, "Core dispatch must NEVER be reached when advisor blocks");
   assert.equal(coreSelectedPlan, null, "Human review dialog must NOT open for rejected plan");
 
-  // Phase 4: Agent fixes the plan based on advisor critique
-  await fs.writeFile(
-    path.join(localRoot, "fixed-feature-plan.md"),
-    "# Fixed Feature Plan\n\n## Implementation\nPurely local plugin implementation strictly within repository boundaries.\n",
-    "utf8",
-  );
+  // Phase 4: Agent fixes the plan based on advisor critique (structurally valid and safe)
+  const fixedFeatureContent = [
+    "# Fixed Feature Plan",
+    "## Context",
+    "Purely local plugin development.",
+    "## Approach",
+    "Purely local plugin implementation strictly within repository boundaries.",
+    "## Verification",
+    "bun tests/e2e-all.mjs",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "fixed-feature-plan.md"), fixedFeatureContent, "utf8");
 
   // Agent proposes the fixed plan
   dispatchedToCore = false;
@@ -175,16 +222,50 @@ try {
   }, context);
   assert.equal(advisorCalls.length, callsBeforeRePropose, "Re-proposing unchanged plan must hit cache and spend 0 extra tokens");
 
+  // Phase 6: Native Refine (handleAgentStart) resets convergence cycle and allows new proposal
+  await startHandler({
+    prompt: "Refine plan: add more verification commands",
+  }, context);
+
+  const refinedFeatureContent = [
+    "# Refined Feature Plan",
+    "## Context",
+    "Refined in-tree implementation.",
+    "## Approach",
+    "Step 1: refine approach with additional tests.",
+    "## Verification",
+    "bun run check && bun tests/e2e-real-plan-handoff.mjs",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "refined-feature-plan.md"), refinedFeatureContent, "utf8");
+
+  dispatchedToCore = false;
+  coreSelectedPlan = null;
+
+  const refinedAllowed = await toolHandler({
+    toolName: "write",
+    toolCallId: "propose-refined-call",
+    input: { path: "xd://propose", content: "refined-feature" },
+  }, context);
+
+  assert.equal(refinedAllowed, undefined, "Refined proposal must pass validator and advisor after reset");
+  assert.equal(advisorCalls.length, 3, "Advisor must run on new refined proposal");
+
+  const coreRefinedResult = await dispatchResolutionDevice(ompSession, "propose", "refined-feature");
+  assert.equal(dispatchedToCore, true, "Refined proposal reaches OMP core dispatch");
+  assert.equal(coreRefinedResult.xdev.inner.planFilePath, "local://refined-feature-plan.md");
+
   process.stdout.write(`${JSON.stringify({
-    schema: "omp-plan-kit-real-handoff-e2e@2",
+    schema: "omp-plan-kit-real-handoff-e2e@3",
     decision: "pass",
     scenarios: {
       zeroWasteOnIntermediateTodo: true,
+      validatorBlockedInvalidStructure: true,
       advisorRanOnDefectivePlan: true,
       advisorBlockedDefectivePlan: true,
       advisorRanOnCleanPlan: true,
       cleanPlanApprovedAndDispatchedToCore: true,
       unchangedPlanHitCache: true,
+      refineResetsCycleAndDispatchesRefinedPlan: true,
     },
     totalAdvisorCalls: advisorCalls.length,
     blockedReason: blockedResult.reason,
