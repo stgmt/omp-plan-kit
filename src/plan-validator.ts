@@ -11,7 +11,9 @@ export type PlanIssue = {
     | "SECTION_MISSING"
     | "SECTION_DUPLICATE"
     | "SECTION_ORDER"
-    | "SECTION_EMPTY";
+    | "SECTION_EMPTY"
+    | "APPROACH_TARGET_MISSING"
+    | "VERIFICATION_NOT_ACTIONABLE";
   section?: PlanSection;
   line?: number;
   message: string;
@@ -32,12 +34,198 @@ const REQUIRED_SECTIONS: readonly PlanSection[] = [
   "Verification",
 ] as const;
 
-interface SectionOccurrence {
+interface RawHeading {
   section: PlanSection;
   line: number;
-  contentStartLine: number;
-  contentEndLine: number;
-  hasContent: boolean;
+}
+
+interface StepInfo {
+  line: number;
+  lines: string[];
+}
+
+function isTargetToken(raw: string): boolean {
+  const token = raw.trim();
+  if (!token) return false;
+  // 1. Path indicators (/ or \)
+  // 2. Symbol / section anchor (#)
+  // 3. Namespace delimiter (::)
+  if (token.includes("/") || token.includes("\\") || token.includes("#") || token.includes("::")) {
+    return true;
+  }
+  // 4. UI / interface path: Name > Child
+  if (/[\p{L}\p{N}_$-]+\s*>\s*[\p{L}\p{N}_$-]+/u.test(token)) {
+    return true;
+  }
+  // 5. Function call: name()
+  if (/^[\p{L}_$][\p{L}\p{N}_$]*\s*\(.*\)$/u.test(token)) {
+    return true;
+  }
+  // 6. Identifier chain: name.member
+  if (/[\p{L}\p{N}_$-]+\.[\p{L}\p{N}_$-]+/u.test(token)) {
+    return true;
+  }
+  return false;
+}
+
+function extractInlineCodeTokens(line: string): string[] {
+  const tokens: string[] = [];
+  const regex = /`([^`\r\n]+)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(line)) !== null) {
+    tokens.push(match[1]);
+  }
+  return tokens;
+}
+
+function stepHasTarget(stepLines: readonly string[]): boolean {
+  for (const line of stepLines) {
+    const tokens = extractInlineCodeTokens(line);
+    for (const token of tokens) {
+      if (isTargetToken(token)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function getApproachSteps(
+  lines: readonly string[],
+  primaryLine: number,
+  endIndex: number,
+  lineFenceState: readonly boolean[]
+): StepInfo[] {
+  const startIdx = primaryLine; // 0-based index of line after "## Approach"
+  const endIdx = endIndex; // 0-based index of line before next H2
+
+  // 1. Check for H3 headings: ### ...
+  const h3Indices: number[] = [];
+  for (let idx = startIdx; idx < endIdx; idx++) {
+    if (lineFenceState[idx]) continue;
+    if (/^###\s+(.*?)\s*$/.test(lines[idx])) {
+      h3Indices.push(idx);
+    }
+  }
+
+  if (h3Indices.length > 0) {
+    return h3Indices.map((idx, i) => {
+      const nextIdx = i + 1 < h3Indices.length ? h3Indices[i + 1] : endIdx;
+      const stepLines: string[] = [];
+      for (let j = idx; j < nextIdx; j++) {
+        if (!lineFenceState[j]) {
+          stepLines.push(lines[j]);
+        }
+      }
+      return {
+        line: idx + 1,
+        lines: stepLines,
+      };
+    });
+  }
+
+  // 2. Check for top-level numbered list items: 1. or 1)
+  const numIndices: number[] = [];
+  for (let idx = startIdx; idx < endIdx; idx++) {
+    if (lineFenceState[idx]) continue;
+    if (/^(\d+\.|\d+\))\s+(.*)$/.test(lines[idx])) {
+      numIndices.push(idx);
+    }
+  }
+
+  if (numIndices.length > 0) {
+    return numIndices.map((idx, i) => {
+      const nextIdx = i + 1 < numIndices.length ? numIndices[i + 1] : endIdx;
+      const stepLines: string[] = [];
+      for (let j = idx; j < nextIdx; j++) {
+        if (!lineFenceState[j]) {
+          stepLines.push(lines[j]);
+        }
+      }
+      return {
+        line: idx + 1,
+        lines: stepLines,
+      };
+    });
+  }
+
+  // 3. If neither H3 nor numbered items exist, the entire section is one step
+  const stepLines: string[] = [];
+  for (let j = startIdx; j < endIdx; j++) {
+    if (!lineFenceState[j]) {
+      stepLines.push(lines[j]);
+    }
+  }
+  return [
+    {
+      line: primaryLine,
+      lines: stepLines,
+    },
+  ];
+}
+
+function isVerificationActionable(
+  lines: readonly string[],
+  primaryLine: number,
+  endIndex: number,
+  lineFenceState: readonly boolean[]
+): boolean {
+  const startIdx = primaryLine; // 0-based index of line after "## Verification"
+  const endIdx = endIndex; // 0-based index of next H2 heading or EOF
+
+  // Form 1: inline code + (→ or => or ->) + expected result (outside code fences)
+  for (let idx = startIdx; idx < endIdx; idx++) {
+    if (lineFenceState[idx]) continue;
+    const line = lines[idx];
+    const match = line.match(/`([^`\r\n]+)`\s*(?:→|=>|->)\s*(\S.*)$/u);
+    if (match) {
+      const action = match[1].trim();
+      const expected = match[2].trim();
+      if (action.length > 0 && expected.length > 0) {
+        return true;
+      }
+    }
+  }
+
+  // Form 2: non-empty fenced code block followed by Expected: / Ожидаемо:
+  for (let idx = startIdx; idx < endIdx; idx++) {
+    const line = lines[idx];
+    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const char = fenceMatch[2][0];
+      const len = fenceMatch[2].length;
+      let closeIdx = -1;
+      let hasBlockContent = false;
+      for (let j = idx + 1; j < endIdx; j++) {
+        const innerLine = lines[j];
+        const innerFence = innerLine.match(/^(\s*)(`{3,}|~{3,})/);
+        if (innerFence && innerFence[2][0] === char && innerFence[2].length >= len) {
+          closeIdx = j;
+          break;
+        }
+        if (innerLine.trim().length > 0) {
+          hasBlockContent = true;
+        }
+      }
+
+      if (closeIdx !== -1 && hasBlockContent) {
+        // Look for the closest non-empty line after closeIdx within this section
+        for (let k = closeIdx + 1; k < endIdx; k++) {
+          const nextLine = lines[k].trim();
+          if (nextLine.length === 0) continue;
+          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|Ожидаемо):\s*(\S.*)$/iu);
+          if (expMatch && expMatch[1].trim().length > 0) {
+            return true;
+          }
+          // The first non-empty line after code block is NOT Expected:, so this block doesn't qualify
+          break;
+        }
+        idx = closeIdx;
+      }
+    }
+  }
+
+  return false;
 }
 
 export function validatePlanStructure(markdown: string): PlanIssue[] {
@@ -58,11 +246,7 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
   let inFence = false;
   let fenceChar = "";
   let fenceLen = 0;
-
-  interface RawHeading {
-    section: PlanSection;
-    line: number;
-  }
+  const lineFenceState: boolean[] = new Array(lines.length).fill(false);
 
   const headings: RawHeading[] = [];
 
@@ -76,16 +260,19 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
         inFence = true;
         fenceChar = char;
         fenceLen = len;
+        lineFenceState[i] = true;
         continue;
       } else if (char === fenceChar && len >= fenceLen) {
         inFence = false;
         fenceChar = "";
         fenceLen = 0;
+        lineFenceState[i] = true;
         continue;
       }
     }
 
     if (inFence) {
+      lineFenceState[i] = true;
       continue;
     }
 
@@ -138,13 +325,13 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
   }
 
   // 3. Section empty check (for present sections, check primary occurrence)
+  const emptySections = new Set<PlanSection>();
   for (const [section, occurrences] of occurrencesBySection.entries()) {
     if (occurrences.length === 0) {
       continue; // Missing sections already reported, do not add dependent SECTION_EMPTY
     }
     const primary = occurrences[0];
     const startIndex = primary.line; // line after heading (1-based line -> 0-based index)
-    // Find next heading line after this heading, regardless of section
     let nextHeadingLine = lines.length + 1;
     for (const h of headings) {
       if (h.line > primary.line && h.line < nextHeadingLine) {
@@ -162,6 +349,7 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
     }
 
     if (!hasContent) {
+      emptySections.add(section);
       issues.push({
         code: "SECTION_EMPTY",
         section,
@@ -172,13 +360,54 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
     }
   }
 
-  // 4. Section order check (for primary occurrences of present sections)
-  // Canonical rules:
-  // - Context must appear before Approach, Critical files & anchors, Verification, Assumptions & contingencies
-  // - Approach must appear after Context (if present) and before Critical files & anchors, Verification, Assumptions & contingencies
-  // - Critical files & anchors must appear after Approach and before Verification, Assumptions & contingencies
-  // - Verification must appear after Approach, Critical files & anchors (if present) and before Assumptions & contingencies
-  // - Assumptions & contingencies must appear after Verification
+  // 4. Approach target validation: only if Approach is present, unique, and non-empty
+  const approachOccurrences = occurrencesBySection.get("Approach")!;
+  if (approachOccurrences.length === 1 && !emptySections.has("Approach")) {
+    const primary = approachOccurrences[0];
+    let nextHeadingLine = lines.length + 1;
+    for (const h of headings) {
+      if (h.line > primary.line && h.line < nextHeadingLine) {
+        nextHeadingLine = h.line;
+      }
+    }
+    const endIdx = nextHeadingLine - 1;
+    const steps = getApproachSteps(lines, primary.line, endIdx, lineFenceState);
+    for (const step of steps) {
+      if (!stepHasTarget(step.lines)) {
+        issues.push({
+          code: "APPROACH_TARGET_MISSING",
+          section: "Approach",
+          line: step.line,
+          message: `Approach step at line ${step.line} has no exact target`,
+          fix: "Add an exact target using inline code, e.g. `src/file.ts#symbol`, `GET /api/orders`, `Settings > Billing`.",
+        });
+      }
+    }
+  }
+
+  // 5. Verification actionable validation: only if Verification is present, unique, and non-empty
+  const verificationOccurrences = occurrencesBySection.get("Verification")!;
+  if (verificationOccurrences.length === 1 && !emptySections.has("Verification")) {
+    const primary = verificationOccurrences[0];
+    let nextHeadingLine = lines.length + 1;
+    for (const h of headings) {
+      if (h.line > primary.line && h.line < nextHeadingLine) {
+        nextHeadingLine = h.line;
+      }
+    }
+    const endIdx = nextHeadingLine - 1;
+    if (!isVerificationActionable(lines, primary.line, endIdx, lineFenceState)) {
+      issues.push({
+        code: "VERIFICATION_NOT_ACTIONABLE",
+        section: "Verification",
+        line: primary.line,
+        message: "Verification has no actionable proof",
+        fix: "Add <command or exact surface> → <observable expected result>, or a fenced command followed by Expected: <observable result>.",
+      });
+    }
+  }
+
+  // 6. Section order check (for primary occurrences of present sections)
   const primaryBySection = new Map<PlanSection, number>();
   for (const [section, occurrences] of occurrencesBySection.entries()) {
     if (occurrences.length > 0) {

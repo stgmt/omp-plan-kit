@@ -55,6 +55,12 @@ Release gate: no plan can move from proposal to execution without an exact ident
 
 Target: turn a Markdown plan into a predictable, inspectable document.
 
+Status:
+- **v1.2.0 delivered:** Batch structural validation (`Context`, `Approach`, `Verification` ordering, duplicate checks, empty section checks, dependent error suppression, and single-pass repair packet) and bounded repair convergence controller (`MAX_FAILED_VALIDATIONS=3`, `MAX_SAME_HASH_REPEATS=2`, `MAX_NO_PROGRESS_ATTEMPTS=2`, `MAX_TURN_PROPOSALS=4`, sticky turn latches).
+- **v1.3.0 delivered:** Actionable plan contracts (`APPROACH_TARGET_MISSING` exact step targets with `/`, `\`, `#`, `::`, `name()`, `name.member`, or `Name > Child`; `VERIFICATION_NOT_ACTIONABLE` observable verification proofs via inline `<action>` → `<result>` or fenced blocks with `Expected:` / `Ожидаемо:`).
+- *Future roadmap items (not in v1.3.0):* Custom sections (`Tasks`, `File Changes`), synthetic item IDs (FR/AC/T), broken-reference checking, and semantic meaning analysis remain future scope.
+
+Roadmap items:
 - Define a versioned plan schema compatible with normal Markdown.
 - Require machine-readable sections for context, goal, scope, requirements, approach, files,
   verification, risks, and next steps.

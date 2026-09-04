@@ -2,6 +2,35 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.3.0] - 2026-09-04
+
+### Added
+
+- Deterministic Approach step target verification (`APPROACH_TARGET_MISSING` in `src/plan-validator.ts`):
+  - Requires each step in `## Approach` to name an exact target using inline code outside code fences.
+  - Supports path indicators (`/` or `\`), symbol anchors (`#`), namespaces (`::`), function calls (`name()`), identifier chains (`name.member`), and interface paths (`Name > Child`).
+  - Partitions steps by H3 headings (`### Step`), top-level numbered list items (`1.` or `1)`), or evaluates the entire section as one step if neither is present.
+  - Reports exact line numbers of missing targets and suggests concrete examples.
+- Actionable verification proof validation (`VERIFICATION_NOT_ACTIONABLE` in `src/plan-validator.ts`):
+  - Requires `## Verification` to contain at least one verifiable proof in either of two supported forms:
+    1. `<action>` → `<observable expected result>` (accepts `→`, `=>`, `->`);
+    2. Non-empty fenced code block followed immediately by `Expected: <result>` or `Ожидаемо: <result>`.
+  - Non-CLI verification support: browser UI surfaces (e.g. `Settings > Billing`), API routes, and manual checks pass validation without requiring CLI commands.
+- Extended test suites:
+  - `tests/e2e-plan-validator.mjs` covers negative cases (`Update the validator`, `Run tests`), positive cases with inline code targets, fenced code blocks with `Expected:` / `Ожидаемо:`, UI plans without CLI, single-pass combined errors, and dependency suppression.
+  - `tests/e2e-real-plan-handoff.mjs` verifies that non-actionable plans block at the validator level with 0 advisor calls, while clean UI-plans pass the validator, receive advisor approval, and reach native review overlay.
+- Release workflow hardening (`.github/workflows/release.yml`):
+  - Strictly requires remote tag to exist on origin before publishing.
+  - Validates `PEELED_TAG_COMMIT == HEAD_COMMIT` to eliminate tag-to-commit divergence.
+  - Invokes `gh release create` with `--verify-tag` and without `--target main`.
+
+### Changed
+
+- Single-pass validator reports both structural and actionability errors together in one structured repair packet.
+- Suppresses dependent `APPROACH_TARGET_MISSING` and `VERIFICATION_NOT_ACTIONABLE` issues when sections are missing, empty, or duplicated.
+- Migrated plan fixtures in `tests/e2e-advisor-contract.mjs`, `tests/e2e-advisor-live.mjs`, `tests/e2e-convergence-controller.mjs`, `tests/e2e-programmer.mjs`, and `tests/e2e-real-plan-handoff.mjs` to include exact targets and actionable verification proofs.
+- `tests/e2e-real-plan-handoff.mjs` supports `OMP_PLAN_KIT_EXTENSION_PATH` for running against extracted release candidates.
+
 ## [1.2.0] - 2026-09-04
 
 ### Added

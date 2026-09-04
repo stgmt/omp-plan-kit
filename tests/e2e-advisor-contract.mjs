@@ -74,9 +74,9 @@ try {
     "## Context",
     "Targeting upstream OMP core internals.",
     "## Approach",
-    "Step 1: add upstream patch.",
+    "Step 1: add upstream patch in `src/core.ts`.",
     "## Verification",
-    "Run tests.",
+    "`bun test` → exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "bad-plan.md"), badPlanContent, "utf8");
   const advisorBlock = await policy.handleToolCall({ toolName: "write", toolCallId: "propose-bad", input: { path: "xd://propose", content: "bad" } }, context);
@@ -91,9 +91,9 @@ try {
     "## Context",
     "Safe in-tree project enhancement.",
     "## Approach",
-    "Step 1: implement safe feature within project.",
+    "Step 1: implement safe feature within project in `src/utils.ts`.",
     "## Verification",
-    "Run tests within project.",
+    "`bun test` → all tests pass",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "clean-plan.md"), cleanPlanContent, "utf8");
   const allowed = await policy.handleToolCall({ toolName: "write", toolCallId: "propose-clean", input: { path: "xd://propose", content: "clean" } }, context);

@@ -137,29 +137,35 @@ jobs:
           echo "HEAD commit: ${HEAD_COMMIT}"
 
           # Verify commit is on origin/main
-          git fetch origin main
+          git fetch origin main --tags
           MAIN_TIP=$(git rev-parse origin/main)
           if ! git merge-base --is-ancestor "${HEAD_COMMIT}" origin/main; then
             echo "::error::Commit ${HEAD_COMMIT} is not in origin/main!"
             exit 1
           fi
 
+          # Require remote tag to exist and verify peeled commit matches HEAD
+          PEELED_TAG_COMMIT=$(git rev-parse "${INPUT_TAG}^{commit}" 2>/dev/null || echo "")
+          if [ -z "${PEELED_TAG_COMMIT}" ]; then
+            echo "::error::Tag ${INPUT_TAG} does not exist on origin! Tag must be pushed before running release with publish=true."
+            exit 1
+          fi
+
+          if [ "${PEELED_TAG_COMMIT}" != "${HEAD_COMMIT}" ]; then
+            echo "::error::Peeled tag commit (${PEELED_TAG_COMMIT}) does not match HEAD commit (${HEAD_COMMIT})!"
+            exit 1
+          fi
+          echo "Verified tag ${INPUT_TAG} commit equals HEAD: ${PEELED_TAG_COMMIT}"
+
           # Check if release already exists
           if gh release view "${INPUT_TAG}" >/dev/null 2>&1; then
             echo "Release ${INPUT_TAG} already exists. Checking idempotency..."
-            PEELED_TAG_COMMIT=$(git rev-parse "${INPUT_TAG}^{commit}" 2>/dev/null || echo "")
-
-            if [ -n "${PEELED_TAG_COMMIT}" ] && [ "${PEELED_TAG_COMMIT}" != "${HEAD_COMMIT}" ]; then
-              echo "::error::Existing release tag points to commit ${PEELED_TAG_COMMIT}, but current HEAD is ${HEAD_COMMIT}!"
-              exit 1
-            fi
-
             echo "Existing release asset check passed idempotently."
           else
             echo "Creating release ${INPUT_TAG}..."
             gh release create "${INPUT_TAG}" \
               "${{ steps.pack.outputs.archive_path }}" \
-              --target main \
+              --verify-tag \
               --title "OMP Plan Kit ${INPUT_TAG}" \
               --notes-file "${{ steps.meta.outputs.notes_file }}"
             echo "Release ${INPUT_TAG} created successfully."

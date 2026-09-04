@@ -6,11 +6,12 @@
 **OMP Plan Kit is the planning kit for Oh My Pi (OMP): it keeps the plan proposed, approved,
 executed, and later reviewed as the same plan.**
 
-OMP Plan Kit provides deterministic stale-plan protection, structural plan validation, bounded
-repair convergence, and native LLM review for OMP plan mode.
+OMP Plan Kit provides deterministic stale-plan protection, actionable plan contracts, structural
+plan validation, bounded repair convergence, and native LLM review for OMP plan mode.
 
 - **Deterministic preflight:** strict slug grammar, session-local path containment, and exact artifact existence checks.
-- **Batch structural validation:** all independent structural errors returned in one actionable repair packet.
+- **Batch structural & actionable validation:** all independent structural and actionability errors returned in one actionable repair packet.
+- **Actionable plan contracts:** every Approach step names an exact target, and Verification contains observable, executable proof.
 - **Bounded convergence:** strict limits on failures, unchanged files, and no-progress churn to prevent infinite correction loops.
 - **Optional bounded advisor:** native OMP LLM review explains concrete defects without rewriting the plan.
 - **Native review boundary:** only verified, approved plans reach OMP's human-review overlay.
@@ -21,7 +22,7 @@ repair convergence, and native LLM review for OMP plan mode.
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.2.0
+omp plugin install github:stgmt/omp-plan-kit#v1.3.0
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -66,6 +67,8 @@ OMP write(path=xd://propose, content=<slug>)
           ├─ sticky turn latch check (MAX_TURN_PROPOSALS = 4)
           ├─ unchanged SHA check (MAX_SAME_HASH_REPEATS = 2)
           ├─ validate canonical sections (## Context, ## Approach, ## Verification)
+          ├─ validate Approach step targets (APPROACH_TARGET_MISSING)
+          ├─ validate Verification actionable proof (VERIFICATION_NOT_ACTIONABLE)
           ├─ progress tracking (fewer issues vs churn, MAX_NO_PROGRESS_ATTEMPTS = 2)
           ├─ batch repair packet (MAX_FAILED_VALIDATIONS = 3)
           └─ sticky stop if budget exceeded (no ctx.abort overwrite)
@@ -89,25 +92,43 @@ The validator parses Markdown level `##` headings outside of code fences:
 ### Mandatory sections (in exact canonical order)
 
 1. `## Context` — problem description, current state, and background.
-2. `## Approach` — step-by-step implementation changes and technical details.
-3. `## Verification` — concrete commands and observable verification checks.
+2. `## Approach` — step-by-step implementation changes and technical details with exact targets.
+3. `## Verification` — concrete actions and observable verification proofs.
 
 ### Optional sections (strictly constrained placement)
 
 - `## Critical files & anchors` — allowed once, strictly between `Approach` and `Verification`.
 - `## Assumptions & contingencies` — allowed once, strictly after `Verification`.
 
-Headings inside code fences (``` or ~~~) are ignored. Sections must contain non-whitespace body text. Dependent errors (e.g., reporting `SECTION_EMPTY` or `SECTION_ORDER` for a section that is already `SECTION_MISSING`) are suppressed.
+Headings inside code fences (``` or ~~~) are ignored. Sections must contain non-whitespace body text. Dependent errors (e.g., reporting `SECTION_EMPTY`, `APPROACH_TARGET_MISSING`, or `VERIFICATION_NOT_ACTIONABLE` for a section that is missing or duplicate) are suppressed.
+
+### Actionable plan guarantees (v1.3.0)
+
+1. **Approach step targets (`APPROACH_TARGET_MISSING`):**
+   - Each step in `Approach` must contain at least one inline code token specifying an exact target outside code fences:
+     - Path indicators: `/` or `\` (e.g. `src/file.ts`, `GET /api/orders`, `.\build\run.exe`);
+     - Anchor / symbol delimiters: `#` (e.g. `src/plan-validator.ts#validatePlanStructure`);
+     - Namespace delimiters: `::` (e.g. `crate::module::func`);
+     - Function calls: `name()` (e.g. `validatePlanStructure()`);
+     - Identifier chains: `name.member` (e.g. `PlanIssue.code`, `package.json`);
+     - Interface paths: `Name > Child` (e.g. `Settings > Billing`).
+   - Steps are partitioned by H3 headings (`### Step`); if absent, by top-level numbered list items (`1.` or `1)`); if neither is present, the entire section is evaluated as a single step.
+
+2. **Actionable verification proof (`VERIFICATION_NOT_ACTIONABLE`):**
+   - The `Verification` section must contain at least one verifiable proof in either of two supported forms:
+     - **Inline action + result:** `<command or exact surface>` → `<observable expected result>` (also accepts `=>` or `->`);
+     - **Fenced command + expectation:** a non-empty fenced code block followed immediately by `Expected: <observable result>` or `Ожидаемо: <observable result>`.
+   - Actions are not restricted to CLI: API routes, browser UI screens (e.g. `Settings > Billing`), TUI states, and manual checks are fully supported.
 
 ## All-errors repair packet
 
-When a plan violates the structural contract, the validator collects **all** independent issues in a single pass and returns a complete repair packet to the model:
+When a plan violates the structural or actionability contract, the validator collects **all** independent issues in a single pass and returns a complete repair packet to the model:
 
 ```text
 [PLAN_VALIDATOR_BLOCK] Plan validation failed (Attempt 1 of 3):
 
-1. [SECTION_MISSING] Context: Required section "Context" is missing. Fix: Add "## Context" section to the plan.
-2. [SECTION_ORDER] Approach, line 15: Section "Approach" at line 15 is out of order (must appear before "Verification"). Fix: Move "## Approach" before "## Verification".
+1. [APPROACH_TARGET_MISSING] Approach, line 4: Approach step at line 4 has no exact target. Fix: Add an exact target using inline code, e.g. `src/file.ts#symbol`, `GET /api/orders`, `Settings > Billing`.
+2. [VERIFICATION_NOT_ACTIONABLE] Verification, line 6: Verification has no actionable proof. Fix: Add <command or exact surface> → <observable expected result>, or a fenced command followed by Expected: <observable result>.
 
 Fix every issue above in local://<slug>-plan.md, keep the same slug, reread the complete plan, and do not call xd://propose until all listed issues are fixed.
 ```
@@ -141,7 +162,7 @@ Therefore, the plan file must be written in one turn, and `write xd://propose <s
 
 The advisor is an economical exit-gate that runs strictly after structural validation passes:
 
-- **Zero tokens on invalid plans**: syntax and structural failures block before the advisor runs.
+- **Zero tokens on invalid plans**: syntax, structural, and actionability failures block before the advisor runs.
 - **Cache**: an unchanged plan re-proposal hits an in-session `SHA-256` cache and spends zero additional tokens.
 - **LLM review**: evaluates safety, repository boundaries, and concrete verification.
   - `REJECT` → hard block `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>`; agent stays in plan mode.
@@ -163,7 +184,7 @@ Configuration:
 All behavioral probes live in `tests/`:
 
 ```bash
-bun tests/e2e-plan-validator.mjs          # batch structural validator contract
+bun tests/e2e-plan-validator.mjs          # batch structural & actionability validator contract
 bun tests/e2e-convergence-controller.mjs  # convergence limits, progress, sticky latches
 bun tests/e2e-programmer.mjs              # slug mutations, edge cases, profile loader
 bun tests/e2e-advisor-contract.mjs        # advisor budget, token caps, cache deduplication
@@ -182,19 +203,19 @@ bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && 
 
 ```bash
 omp plugin uninstall omp-plan-kit
-omp plugin install github:stgmt/omp-plan-kit#v1.1.0
+omp plugin install github:stgmt/omp-plan-kit#v1.2.0
 ```
 
 ## Repository map
 
 ```text
-src/plan-validator.ts                  deterministic structural plan validator & repair packet
+src/plan-validator.ts                  deterministic structural & actionability plan validator
 src/extension.ts                       convergence controller, preflight & advisor entrypoint
 dist/extension.js                      shipped OMP plugin bundle
 ROADMAP.md                             product direction and release gates
 scripts/install-all-profiles.mjs       CLI install across current PC profiles
 scripts/uninstall-all-profiles.mjs     CLI uninstall across current PC profiles
-tests/e2e-plan-validator.mjs           structural validator tests (missing, duplicate, order, empty)
+tests/e2e-plan-validator.mjs           structural & actionable validator tests
 tests/e2e-convergence-controller.mjs   convergence tests (churn, repeats, slug hopping, reset)
 tests/e2e-programmer.mjs               mutation and edge probe against OMP loader
 tests/e2e-advisor-contract.mjs         advisor bounds, token caps, cache deduplication
@@ -205,8 +226,8 @@ audit-reports/                         evidence, architecture decisions, and rel
 
 ## Release
 
-Current release: [`v1.2.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.2.0).
+Current release: [`v1.3.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.3.0).
 
-Release review report: `audit-reports/omp-plan-kit-v1.2.0-review-2026-09-04.md`.
+Release review report: `audit-reports/omp-plan-kit-v1.3.0-review-2026-09-04.md`.
 
 License: MIT.

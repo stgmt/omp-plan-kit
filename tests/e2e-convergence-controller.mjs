@@ -61,7 +61,7 @@ try {
     assert.equal(advisorCalls, 0);
 
     // Attempt 2: adds Context and Approach, but Verification still missing (1 error < 3 errors)
-    const prog2 = "## Context\nContext text\n## Approach\nApproach text\n";
+    const prog2 = "## Context\nContext text\n## Approach\n1. Target in `src/index.ts`\n";
     await fs.writeFile(path.join(localRoot, "prog-plan.md"), prog2, "utf8");
     const res2 = await policy.handleToolCall({
       toolName: "write",
@@ -74,7 +74,7 @@ try {
     assert.equal(advisorCalls, 0);
 
     // Attempt 3: adds Verification -> valid, passes to advisor!
-    const prog3 = prog2 + "## Verification\nVerification text\n";
+    const prog3 = prog2 + "## Verification\n`bun test` → exit code 0\n";
     await fs.writeFile(path.join(localRoot, "prog-plan.md"), prog3, "utf8");
     const res3 = await policy.handleToolCall({
       toolName: "write",
@@ -241,9 +241,9 @@ try {
       "## Context",
       "Context after reset",
       "## Approach",
-      "Approach after reset",
+      "1. Approach after reset in `src/feature.ts`.",
       "## Verification",
-      "Verification after reset",
+      "- `bun test` → exit code 0",
     ].join("\n");
     await fs.writeFile(path.join(localRoot, "fresh-plan.md"), validAfterReset, "utf8");
     const resFresh = await policy.handleToolCall({
