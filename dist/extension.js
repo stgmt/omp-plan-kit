@@ -19,6 +19,158 @@ var REQUIRED_SECTIONS = [
   "Approach",
   "Verification"
 ];
+function isTargetToken(raw) {
+  const token = raw.trim();
+  if (!token)
+    return false;
+  if (token.includes("/") || token.includes("\\") || token.includes("#") || token.includes("::")) {
+    return true;
+  }
+  if (/[\p{L}\p{N}_$-]+\s*>\s*[\p{L}\p{N}_$-]+/u.test(token)) {
+    return true;
+  }
+  if (/^[\p{L}_$][\p{L}\p{N}_$]*\s*\(.*\)$/u.test(token)) {
+    return true;
+  }
+  if (/[\p{L}\p{N}_$-]+\.[\p{L}\p{N}_$-]+/u.test(token)) {
+    return true;
+  }
+  return false;
+}
+function extractInlineCodeTokens(line) {
+  const tokens = [];
+  const regex = /`([^`\r\n]+)`/g;
+  let match;
+  while ((match = regex.exec(line)) !== null) {
+    tokens.push(match[1]);
+  }
+  return tokens;
+}
+function stepHasTarget(stepLines) {
+  for (const line of stepLines) {
+    const tokens = extractInlineCodeTokens(line);
+    for (const token of tokens) {
+      if (isTargetToken(token)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+function getApproachSteps(lines, primaryLine, endIndex, lineFenceState) {
+  const startIdx = primaryLine;
+  const endIdx = endIndex;
+  const h3Indices = [];
+  for (let idx = startIdx;idx < endIdx; idx++) {
+    if (lineFenceState[idx])
+      continue;
+    if (/^###\s+(.*?)\s*$/.test(lines[idx])) {
+      h3Indices.push(idx);
+    }
+  }
+  if (h3Indices.length > 0) {
+    return h3Indices.map((idx, i) => {
+      const nextIdx = i + 1 < h3Indices.length ? h3Indices[i + 1] : endIdx;
+      const stepLines = [];
+      for (let j = idx;j < nextIdx; j++) {
+        if (!lineFenceState[j]) {
+          stepLines.push(lines[j]);
+        }
+      }
+      return {
+        line: idx + 1,
+        lines: stepLines
+      };
+    });
+  }
+  const numIndices = [];
+  for (let idx = startIdx;idx < endIdx; idx++) {
+    if (lineFenceState[idx])
+      continue;
+    if (/^(\d+\.|\d+\))\s+(.*)$/.test(lines[idx])) {
+      numIndices.push(idx);
+    }
+  }
+  if (numIndices.length > 0) {
+    return numIndices.map((idx, i) => {
+      const nextIdx = i + 1 < numIndices.length ? numIndices[i + 1] : endIdx;
+      const stepLines = [];
+      for (let j = idx;j < nextIdx; j++) {
+        if (!lineFenceState[j]) {
+          stepLines.push(lines[j]);
+        }
+      }
+      return {
+        line: idx + 1,
+        lines: stepLines
+      };
+    });
+  }
+  const stepLines = [];
+  for (let j = startIdx;j < endIdx; j++) {
+    if (!lineFenceState[j]) {
+      stepLines.push(lines[j]);
+    }
+  }
+  return [
+    {
+      line: primaryLine,
+      lines: stepLines
+    }
+  ];
+}
+function isVerificationActionable(lines, primaryLine, endIndex, lineFenceState) {
+  const startIdx = primaryLine;
+  const endIdx = endIndex;
+  for (let idx = startIdx;idx < endIdx; idx++) {
+    if (lineFenceState[idx])
+      continue;
+    const line = lines[idx];
+    const match = line.match(/`([^`\r\n]+)`\s*(?:\u2192|=>|->)\s*(\S.*)$/u);
+    if (match) {
+      const action = match[1].trim();
+      const expected = match[2].trim();
+      if (action.length > 0 && expected.length > 0) {
+        return true;
+      }
+    }
+  }
+  for (let idx = startIdx;idx < endIdx; idx++) {
+    const line = lines[idx];
+    const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const char = fenceMatch[2][0];
+      const len = fenceMatch[2].length;
+      let closeIdx = -1;
+      let hasBlockContent = false;
+      for (let j = idx + 1;j < endIdx; j++) {
+        const innerLine = lines[j];
+        const innerFence = innerLine.match(/^(\s*)(`{3,}|~{3,})/);
+        if (innerFence && innerFence[2][0] === char && innerFence[2].length >= len) {
+          closeIdx = j;
+          break;
+        }
+        if (innerLine.trim().length > 0) {
+          hasBlockContent = true;
+        }
+      }
+      if (closeIdx !== -1 && hasBlockContent) {
+        for (let k = closeIdx + 1;k < endIdx; k++) {
+          const nextLine = lines[k].trim();
+          if (nextLine.length === 0)
+            continue;
+          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E):\s*(\S.*)$/iu);
+          if (expMatch && expMatch[1].trim().length > 0) {
+            return true;
+          }
+          break;
+        }
+        idx = closeIdx;
+      }
+    }
+  }
+  return false;
+}
 function validatePlanStructure(markdown) {
   if (!markdown || markdown.trim().length === 0) {
     return [
@@ -35,6 +187,7 @@ function validatePlanStructure(markdown) {
   let inFence = false;
   let fenceChar = "";
   let fenceLen = 0;
+  const lineFenceState = new Array(lines.length).fill(false);
   const headings = [];
   for (let i = 0;i < lines.length; i++) {
     const line = lines[i];
@@ -46,15 +199,18 @@ function validatePlanStructure(markdown) {
         inFence = true;
         fenceChar = char;
         fenceLen = len;
+        lineFenceState[i] = true;
         continue;
       } else if (char === fenceChar && len >= fenceLen) {
         inFence = false;
         fenceChar = "";
         fenceLen = 0;
+        lineFenceState[i] = true;
         continue;
       }
     }
     if (inFence) {
+      lineFenceState[i] = true;
       continue;
     }
     const headingMatch = line.match(/^##\s+(.*?)\s*$/);
@@ -98,6 +254,7 @@ function validatePlanStructure(markdown) {
       }
     }
   }
+  const emptySections = new Set;
   for (const [section, occurrences] of occurrencesBySection.entries()) {
     if (occurrences.length === 0) {
       continue;
@@ -119,12 +276,56 @@ function validatePlanStructure(markdown) {
       }
     }
     if (!hasContent) {
+      emptySections.add(section);
       issues.push({
         code: "SECTION_EMPTY",
         section,
         line: primary.line,
         message: `Section "${section}" at line ${primary.line} is empty`,
         fix: `Add content to "## ${section}".`
+      });
+    }
+  }
+  const approachOccurrences = occurrencesBySection.get("Approach");
+  if (approachOccurrences.length === 1 && !emptySections.has("Approach")) {
+    const primary = approachOccurrences[0];
+    let nextHeadingLine = lines.length + 1;
+    for (const h of headings) {
+      if (h.line > primary.line && h.line < nextHeadingLine) {
+        nextHeadingLine = h.line;
+      }
+    }
+    const endIdx = nextHeadingLine - 1;
+    const steps = getApproachSteps(lines, primary.line, endIdx, lineFenceState);
+    for (const step of steps) {
+      if (!stepHasTarget(step.lines)) {
+        issues.push({
+          code: "APPROACH_TARGET_MISSING",
+          section: "Approach",
+          line: step.line,
+          message: `Approach step at line ${step.line} has no exact target`,
+          fix: "Add an exact target using inline code, e.g. `src/file.ts#symbol`, `GET /api/orders`, `Settings > Billing`."
+        });
+      }
+    }
+  }
+  const verificationOccurrences = occurrencesBySection.get("Verification");
+  if (verificationOccurrences.length === 1 && !emptySections.has("Verification")) {
+    const primary = verificationOccurrences[0];
+    let nextHeadingLine = lines.length + 1;
+    for (const h of headings) {
+      if (h.line > primary.line && h.line < nextHeadingLine) {
+        nextHeadingLine = h.line;
+      }
+    }
+    const endIdx = nextHeadingLine - 1;
+    if (!isVerificationActionable(lines, primary.line, endIdx, lineFenceState)) {
+      issues.push({
+        code: "VERIFICATION_NOT_ACTIONABLE",
+        section: "Verification",
+        line: primary.line,
+        message: "Verification has no actionable proof",
+        fix: "Add <command or exact surface> \u2192 <observable expected result>, or a fenced command followed by Expected: <observable result>."
       });
     }
   }

@@ -5,7 +5,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const home = os.homedir();
-const installedExtension = path.join(process.cwd(), "dist", "extension.js");
+const installedExtension = process.env.OMP_PLAN_KIT_EXTENSION_PATH
+  ? path.resolve(process.env.OMP_PLAN_KIT_EXTENSION_PATH)
+  : path.join(process.cwd(), "dist", "extension.js");
 const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
 const { loadLegacyPiModule } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/plugins/legacy-pi-compat.ts")).href);
 
@@ -137,9 +139,9 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
     "", // 2
     "   ", // 3
     "## Approach", // 4
-    "Approach details here", // 5
+    "Approach details in `src/file.ts`", // 5
     "## Verification", // 6
-    "Verification commands here", // 7
+    "`bun test` → exit code 0", // 7
   ].join("\n");
 
   const issues = validatePlanStructure(emptySectionMarkdown);
@@ -149,18 +151,18 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   assert.equal(emptyIssues[0].line, 1);
 }
 
-// 6. Suppression of dependent errors (missing section does not trigger SECTION_EMPTY or SECTION_ORDER)
+// 6. Suppression of dependent errors (missing section does not trigger SECTION_EMPTY, SECTION_ORDER, APPROACH_TARGET_MISSING, or VERIFICATION_NOT_ACTIONABLE)
 {
   const missingOnly = [
     "## Verification", // 1
-    "Some verification commands", // 2
+    "- `bun test` → exit code 0", // 2
   ].join("\n");
 
   const issues = validatePlanStructure(missingOnly);
   // Context and Approach are missing
   const missingCodes = issues.filter((i) => i.code === "SECTION_MISSING");
   assert.equal(missingCodes.length, 2);
-  // No SECTION_EMPTY or SECTION_ORDER for missing Context or Approach
+  // No SECTION_EMPTY, SECTION_ORDER, or APPROACH_TARGET_MISSING for missing Context or Approach
   const contextIssues = issues.filter((i) => i.section === "Context");
   assert.equal(contextIssues.length, 1);
   assert.equal(contextIssues[0].code, "SECTION_MISSING");
@@ -168,6 +170,10 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   const approachIssues = issues.filter((i) => i.section === "Approach");
   assert.equal(approachIssues.length, 1);
   assert.equal(approachIssues[0].code, "SECTION_MISSING");
+
+  // Verification is valid, so no VERIFICATION_NOT_ACTIONABLE
+  const verifIssues = issues.filter((i) => i.section === "Verification");
+  assert.equal(verifIssues.length, 0);
 }
 
 // 7. Code fence containing ## headings inside must be ignored as headings
@@ -180,7 +186,7 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
     "Fenced text",
     "```",
     "## Verification",
-    "Verification commands",
+    "`bun test` → exit code 0",
   ].join("\n");
 
   const issues = validatePlanStructure(fencedMarkdown);
@@ -195,10 +201,10 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
     "## Context",
     "Context description and background.",
     "## Approach",
-    "1. Step one",
-    "2. Step two",
+    "1. `src/plan-validator.ts#validatePlanStructure` implementation",
+    "2. `GET /api/orders` route handler",
     "## Verification",
-    "Run tests and verify exit code.",
+    "`bun test` → exit code 0",
   ].join("\n");
 
   const issues = validatePlanStructure(validMinimal);
@@ -211,11 +217,14 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
     "## Context",
     "Context description.",
     "## Approach",
-    "Implementation plan.",
+    "Implementation plan for `src/plan-validator.ts`.",
     "## Critical files & anchors",
     "- src/index.ts: main entry",
     "## Verification",
+    "```bash",
     "bun test",
+    "```",
+    "Expected: all tests pass",
     "## Assumptions & contingencies",
     "Contingency plan here.",
   ].join("\n");
@@ -224,37 +233,267 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   assert.equal(issues.length, 0, "Valid full plan must have 0 issues");
 }
 
-// 10. issueSignature stability
+// 10. APPROACH_TARGET_MISSING negative cases
+{
+  // A. Section without steps (entire section is 1 step)
+  const singleStepNoTarget = [
+    "## Context", // 1
+    "Context text.", // 2
+    "## Approach", // 3
+    "Update the validator.", // 4
+    "## Verification", // 5
+    "`bun test` → exit code 0", // 6
+  ].join("\n");
+  const issuesA = validatePlanStructure(singleStepNoTarget);
+  const targetIssuesA = issuesA.filter((i) => i.code === "APPROACH_TARGET_MISSING");
+  assert.equal(targetIssuesA.length, 1);
+  assert.equal(targetIssuesA[0].line, 3, "Line must be the Approach heading line for single-step section");
+  assert.equal(targetIssuesA[0].message, "Approach step at line 3 has no exact target");
+  assert.match(targetIssuesA[0].fix, /src\/file\.ts#symbol/);
+  assert.match(targetIssuesA[0].fix, /GET \/api\/orders/);
+  assert.match(targetIssuesA[0].fix, /Settings > Billing/);
+
+  // B. H3 steps
+  const h3Steps = [
+    "## Context", // 1
+    "Context text.", // 2
+    "## Approach", // 3
+    "### 1. Update the validator", // 4 (missing target)
+    "Some detail text.", // 5
+    "### 2. Refine `src/plan-validator.ts#validatePlanStructure`", // 6 (has target)
+    "Detail with target.", // 7
+    "### 3. Handle edge cases", // 8 (missing target)
+    "More text.", // 9
+    "## Verification", // 10
+    "`bun test` → exit code 0", // 11
+  ].join("\n");
+  const issuesB = validatePlanStructure(h3Steps);
+  const targetIssuesB = issuesB.filter((i) => i.code === "APPROACH_TARGET_MISSING");
+  assert.equal(targetIssuesB.length, 2);
+  assert.equal(targetIssuesB[0].line, 4);
+  assert.equal(targetIssuesB[0].message, "Approach step at line 4 has no exact target");
+  assert.equal(targetIssuesB[1].line, 8);
+  assert.equal(targetIssuesB[1].message, "Approach step at line 8 has no exact target");
+
+  // C. Numbered steps (1. or 1))
+  const numSteps = [
+    "## Context", // 1
+    "Context text.", // 2
+    "## Approach", // 3
+    "1. Update the validator", // 4 (missing target)
+    "2) Refine `src/plan-validator.ts`", // 5 (has target)
+    "3. Add more tests", // 6 (missing target)
+    "## Verification", // 7
+    "`bun test` → exit code 0", // 8
+  ].join("\n");
+  const issuesC = validatePlanStructure(numSteps);
+  const targetIssuesC = issuesC.filter((i) => i.code === "APPROACH_TARGET_MISSING");
+  assert.equal(targetIssuesC.length, 2);
+  assert.equal(targetIssuesC[0].line, 4);
+  assert.equal(targetIssuesC[0].message, "Approach step at line 4 has no exact target");
+  assert.equal(targetIssuesC[1].line, 6);
+  assert.equal(targetIssuesC[1].message, "Approach step at line 6 has no exact target");
+}
+
+// 11. VERIFICATION_NOT_ACTIONABLE negative cases
+{
+  // A. Bare text without action/arrow
+  const bareVerif = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. `src/validator.ts` update",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
+  const issuesA = validatePlanStructure(bareVerif);
+  const verifIssuesA = issuesA.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE");
+  assert.equal(verifIssuesA.length, 1);
+  assert.equal(verifIssuesA[0].line, 5);
+  assert.equal(verifIssuesA[0].message, "Verification has no actionable proof");
+  assert.equal(
+    verifIssuesA[0].fix,
+    "Add <command or exact surface> → <observable expected result>, or a fenced command followed by Expected: <observable result>."
+  );
+
+  // B. Command without arrow or result
+  const noArrow = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. `src/validator.ts` update",
+    "## Verification",
+    "`npm test`",
+  ].join("\n");
+  const issuesB = validatePlanStructure(noArrow);
+  assert.equal(issuesB.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+
+  // C. Arrow without expected result
+  const arrowNoResult = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. `src/validator.ts` update",
+    "## Verification",
+    "`npm test` →   ",
+  ].join("\n");
+  const issuesC = validatePlanStructure(arrowNoResult);
+  assert.equal(issuesC.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+
+  // D. Fenced code block without Expected:
+  const fencedNoExpected = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. `src/validator.ts` update",
+    "## Verification",
+    "```bash",
+    "bun test",
+    "```",
+    "Check the output manually.",
+  ].join("\n");
+  const issuesD = validatePlanStructure(fencedNoExpected);
+  assert.equal(issuesD.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+
+  // E. Empty fenced code block with Expected:
+  const emptyFenced = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. `src/validator.ts` update",
+    "## Verification",
+    "```bash",
+    "```",
+    "Expected: all pass",
+  ].join("\n");
+  const issuesE = validatePlanStructure(emptyFenced);
+  assert.equal(issuesE.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+}
+
+// 12. Combined non-actionable plan returns all errors in one packet
+{
+  const nonActionablePlan = [
+    "# Non-Actionable Plan", // 1
+    "## Context", // 2
+    "Add new feature.", // 3
+    "## Approach", // 4
+    "Update the validator.", // 5 (no target)
+    "## Verification", // 6
+    "Run tests.", // 7 (no actionable proof)
+  ].join("\n");
+
+  const issues = validatePlanStructure(nonActionablePlan);
+  assert.equal(issues.length, 2, "Must return both APPROACH_TARGET_MISSING and VERIFICATION_NOT_ACTIONABLE in one packet");
+  const codes = issues.map((i) => i.code);
+  assert.deepEqual(codes, ["APPROACH_TARGET_MISSING", "VERIFICATION_NOT_ACTIONABLE"]);
+  assert.equal(issues[0].line, 4);
+  assert.equal(issues[1].line, 6);
+
+  const packet = formatRepairPacket("non-actionable", issues, 1, 3);
+  assert.match(packet, /1\. \[APPROACH_TARGET_MISSING\] Approach, line 4/);
+  assert.match(packet, /2\. \[VERIFICATION_NOT_ACTIONABLE\] Verification, line 6/);
+}
+
+// 13. UI-only plan without CLI passes validator
+{
+  const uiPlan = [
+    "## Context",
+    "Configure billing preferences.",
+    "## Approach",
+    "1. Navigate to `Settings > Billing`.",
+    "2. Update billing email address in `Settings > Billing > Email`.",
+    "## Verification",
+    "- `Settings > Billing` → confirmation is visible",
+  ].join("\n");
+
+  const issues = validatePlanStructure(uiPlan);
+  assert.equal(issues.length, 0, "UI plan with Settings > Billing and confirmation arrow must pass validator with 0 issues");
+}
+
+// 14. Cyrillic Expected: format passes validator
+{
+  const cyrillicPlan = [
+    "## Context",
+    "Контекст фичи.",
+    "## Approach",
+    "1. Обновить `src/plan-validator.ts`.",
+    "## Verification",
+    "```bash",
+    "bun test",
+    "```",
+    "Ожидаемо: все 15 тестов пройдены успешно",
+  ].join("\n");
+
+  const issues = validatePlanStructure(cyrillicPlan);
+  assert.equal(issues.length, 0, "Fenced block with Cyrillic 'Ожидаемо:' must pass validator");
+}
+
+// 15. Suppression of target/actionable errors when Approach or Verification is duplicate or empty
+{
+  const duplicateApproach = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "Update validator.",
+    "## Approach",
+    "Update again.",
+    "## Verification",
+    "`bun test` → exit code 0",
+  ].join("\n");
+
+  const issuesDup = validatePlanStructure(duplicateApproach);
+  // Duplicate emitted, but APPROACH_TARGET_MISSING suppressed
+  assert.equal(issuesDup.filter((i) => i.code === "SECTION_DUPLICATE").length, 1);
+  assert.equal(issuesDup.filter((i) => i.code === "APPROACH_TARGET_MISSING").length, 0);
+
+  const emptyApproach = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "",
+    "## Verification",
+    "`bun test` → exit code 0",
+  ].join("\n");
+
+  const issuesEmpty = validatePlanStructure(emptyApproach);
+  assert.equal(issuesEmpty.filter((i) => i.code === "SECTION_EMPTY").length, 1);
+  assert.equal(issuesEmpty.filter((i) => i.code === "APPROACH_TARGET_MISSING").length, 0);
+}
+
+// 16. issueSignature stability across whitespace and line shifts
 {
   const issues1 = validatePlanStructure([
     "## Context",
-    "",
-    "## Verification",
-    "V",
+    "Context 1",
     "## Approach",
-    "A",
+    "Update the validator", // APPROACH_TARGET_MISSING at line 3
+    "## Verification",
+    "Run tests", // VERIFICATION_NOT_ACTIONABLE at line 5
   ].join("\n"));
 
   const issues2 = validatePlanStructure([
     "## Context",
+    "Context 1",
     "",
+    "",
+    "## Approach",
+    "Update the validator", // line shifted to line 5
     "",
     "",
     "## Verification",
-    "V",
-    "",
-    "## Approach",
-    "A",
+    "Run tests", // line shifted to line 9
   ].join("\n"));
 
-  // Issues have different line numbers due to empty lines:
+  assert.notEqual(issues1[0].line, issues2[0].line);
   assert.notEqual(issues1[1].line, issues2[1].line);
-  // But signatures must be identical:
-  assert.equal(issueSignature(issues1), issueSignature(issues2), "Cosmetic line changes must produce identical issueSignature");
-  assert.equal(issueSignature([]), "", "Empty issues list must have empty signature");
+  assert.equal(issueSignature(issues1), issueSignature(issues2), "New issue codes must maintain stable issueSignature across cosmetic line shifts");
+  assert.equal(
+    issueSignature(issues1),
+    "APPROACH_TARGET_MISSING:Approach;VERIFICATION_NOT_ACTIONABLE:Verification"
+  );
 }
 
-// 11. formatRepairPacket
+// 17. formatRepairPacket
 {
   const issues = [
     { code: "SECTION_MISSING", section: "Context", message: 'Required section "Context" is missing', fix: 'Add "## Context" section.' },
@@ -329,7 +568,7 @@ try {
     "## Approach",
     "```",
     "## Verification",
-    "Verification",
+    "`bun test` → exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "fenced-plan.md"), fenceContent, "utf8");
   const fencedBlock = await policy.handleToolCall({
@@ -342,14 +581,40 @@ try {
   assert.match(fencedBlock.reason, /SECTION_MISSING.*Approach/);
   assert.equal(requests.length, 0, "Fenced heading failure must never call advisor");
 
-  // Integration Test D: Proposing valid minimal plan -> passes validator and reaches advisor
+  // Integration Test D: Proposing non-actionable plan -> blocked by validator with 0 advisor calls
+  const nonActionableContent = [
+    "# Non-Actionable",
+    "## Context",
+    "Context description.",
+    "## Approach",
+    "Update the validator.",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "non-actionable-plan.md"), nonActionableContent, "utf8");
+  const nonActionableBlock = await policy.handleToolCall({
+    toolName: "write",
+    toolCallId: "call-non-actionable",
+    input: { path: "xd://propose", content: "non-actionable" },
+  }, context);
+
+  assert.equal(nonActionableBlock?.block, true);
+  assert.match(nonActionableBlock.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
+  assert.match(nonActionableBlock.reason, /APPROACH_TARGET_MISSING/);
+  assert.match(nonActionableBlock.reason, /VERIFICATION_NOT_ACTIONABLE/);
+  assert.equal(requests.length, 0, "Non-actionable plan must block with 0 advisor calls");
+
+  // Reset turn budget for next integration test
+  await policy.handleAgentStart({ prompt: "Next turn for valid plan" }, context);
+
+  // Integration Test E: Proposing valid minimal plan -> passes validator and reaches advisor
   const validContent = [
     "## Context",
     "Valid context description.",
     "## Approach",
-    "Valid approach description.",
+    "1. Valid approach description in `src/feature.ts`.",
     "## Verification",
-    "Valid verification description.",
+    "`bun test` → exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "valid-plan.md"), validContent, "utf8");
   const validPass = await policy.handleToolCall({
@@ -361,8 +626,30 @@ try {
   assert.equal(validPass, undefined, "Valid plan proposal must pass validator and advisor");
   assert.equal(requests.length, 1, "Advisor must be called exactly once for valid plan");
 
+  // Reset turn budget for next integration test
+  await policy.handleAgentStart({ prompt: "Next turn for UI plan" }, context);
+
+  // Integration Test F: Proposing valid UI plan without CLI -> passes validator and reaches advisor
+  const uiContent = [
+    "## Context",
+    "Valid UI context description.",
+    "## Approach",
+    "1. Configure settings in `Settings > Billing`.",
+    "## Verification",
+    "- `Settings > Billing` → confirmation is visible",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "ui-plan.md"), uiContent, "utf8");
+  const uiPass = await policy.handleToolCall({
+    toolName: "write",
+    toolCallId: "call-ui",
+    input: { path: "xd://propose", content: "ui" },
+  }, context);
+
+  assert.equal(uiPass, undefined, "Valid UI plan proposal must pass validator and reach advisor");
+  assert.equal(requests.length, 2, "Advisor must be called for valid UI plan");
+
   process.stdout.write(`${JSON.stringify({
-    schema: "omp-plan-validator-e2e@1",
+    schema: "omp-plan-validator-e2e@2",
     decision: "pass",
     features: {
       planEmptyDetected: true,
@@ -374,12 +661,17 @@ try {
       codeFenceHeadingsIgnored: true,
       validMinimalPlanPasses: true,
       validFullPlanPasses: true,
+      approachTargetMissingDetectedWithExactLine: true,
+      verificationNotActionableDetectedWithExactLine: true,
+      combinedNonActionableErrorsReturnedTogether: true,
+      validUIPlanWithoutCLIPasses: true,
+      cyrillicExpectedPasses: true,
       issueSignatureStableAcrossCosmetics: true,
       formatRepairPacketContractCompliant: true,
       zeroAdvisorCallsOnValidatorFailures: true,
       validPlanReachesAdvisor: true,
     },
-    totalValidatorTests: 15,
+    totalValidatorTests: 23,
     advisorCalls: requests.length,
   }, null, 2)}\n`);
 } finally {

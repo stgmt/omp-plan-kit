@@ -11,7 +11,9 @@ process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS = "5000";
 process.env.OMP_PLAN_ADVISOR_MAX_TOKENS = "160";
 
 const home = os.homedir();
-const installedExtension = path.join(process.cwd(), "dist", "extension.js");
+const installedExtension = process.env.OMP_PLAN_KIT_EXTENSION_PATH
+  ? path.resolve(process.env.OMP_PLAN_KIT_EXTENSION_PATH)
+  : path.join(process.cwd(), "dist", "extension.js");
 const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
 const { loadExtensions } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/extensions/loader.ts")).href);
 const { dispatchResolutionDevice } = await import(pathToFileURL(path.join(ompRoot, "src/tools/resolve.ts")).href);
@@ -151,15 +153,44 @@ try {
   assert.equal(dispatchedToCore, false, "Structurally invalid plan must never reach core dispatch");
   assert.equal(coreSelectedPlan, null, "Human review dialog must not open for invalid plan");
 
-  // Phase 3: Agent drafts a DEFECTIVE plan (structurally valid, but violates safety rules)
+  // Phase 2c: Non-actionable plan (Approach without exact target, Verification without actionable proof)
+  // is blocked by validator with ZERO advisor calls and no core dispatch
+  const nonActionableContent = [
+    "# Non-Actionable Plan",
+    "## Context",
+    "Add new feature.",
+    "## Approach",
+    "Update the validator.",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
+  await fs.writeFile(path.join(localRoot, "non-actionable-plan.md"), nonActionableContent, "utf8");
+  dispatchedToCore = false;
+  coreSelectedPlan = null;
+
+  const nonActionableResult = await toolHandler({
+    toolName: "write",
+    toolCallId: "propose-non-actionable",
+    input: { path: "xd://propose", content: "non-actionable" },
+  }, context);
+
+  assert.equal(nonActionableResult?.block, true);
+  assert.match(nonActionableResult.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
+  assert.match(nonActionableResult.reason, /APPROACH_TARGET_MISSING/);
+  assert.match(nonActionableResult.reason, /VERIFICATION_NOT_ACTIONABLE/);
+  assert.equal(advisorCalls.length, 0, "Non-actionable plan must NEVER invoke advisor");
+  assert.equal(dispatchedToCore, false, "Non-actionable plan must never reach core dispatch");
+  assert.equal(coreSelectedPlan, null, "Human review dialog must not open for non-actionable plan");
+
+  // Phase 3: Agent drafts a DEFECTIVE plan (structurally valid and actionable, but violates safety rules)
   const badFeatureContent = [
     "# Bad Feature Plan",
     "## Context",
     "Modifying upstream OMP components.",
     "## Approach",
-    "Patch upstream OMP to bypass guards.",
+    "1. Patch upstream OMP in `src/extensibility/extensions/runner.ts` to bypass guards.",
     "## Verification",
-    "Run tests.",
+    "- `bun test` → exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "bad-feature-plan.md"), badFeatureContent, "utf8");
 
@@ -174,22 +205,22 @@ try {
   }, context);
 
   // Assert advisor ACTUALLY RAN on this proposal!
-  assert.equal(advisorCalls.length, 1, "Advisor MUST execute exactly once when structurally valid plan is proposed");
+  assert.equal(advisorCalls.length, 1, "Advisor MUST execute exactly once when structurally valid and actionable plan is proposed");
   assert.equal(blockedResult?.block, true, "Defective proposal MUST be blocked by advisor");
   assert.match(blockedResult.reason, /\[PLAN_ADVISOR_BLOCK\]/, "Must contain [PLAN_ADVISOR_BLOCK]");
   assert.match(blockedResult.reason, /OMP/iu, "Must cite advisor rejection reason");
   assert.equal(dispatchedToCore, false, "Core dispatch must NEVER be reached when advisor blocks");
   assert.equal(coreSelectedPlan, null, "Human review dialog must NOT open for rejected plan");
 
-  // Phase 4: Agent fixes the plan based on advisor critique (structurally valid and safe)
+  // Phase 4: Agent fixes the plan into an actionable UI-plan without CLI (structurally valid, actionable, and safe)
   const fixedFeatureContent = [
     "# Fixed Feature Plan",
     "## Context",
     "Purely local plugin development.",
     "## Approach",
-    "Purely local plugin implementation strictly within repository boundaries.",
+    "1. Configure settings in `Settings > Billing` within project UI boundaries.",
     "## Verification",
-    "bun tests/e2e-all.mjs",
+    "- `Settings > Billing` → confirmation is visible",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "fixed-feature-plan.md"), fixedFeatureContent, "utf8");
 
@@ -204,12 +235,12 @@ try {
   }, context);
 
   // Assert advisor RAN on the new plan proposal!
-  assert.equal(advisorCalls.length, 2, "Advisor MUST execute to review the newly proposed plan");
-  assert.equal(allowedResult, undefined, "Clean plan proposal must be allowed to pass the guard");
+  assert.equal(advisorCalls.length, 2, "Advisor MUST execute to review the newly proposed UI plan");
+  assert.equal(allowedResult, undefined, "Clean UI plan proposal must be allowed to pass the guard");
 
   // Since guard allowed it, OMP resolution device receives the proposal
   const coreResult = await dispatchResolutionDevice(ompSession, "propose", "fixed-feature");
-  assert.equal(dispatchedToCore, true, "Clean proposal successfully reaches OMP core dispatch");
+  assert.equal(dispatchedToCore, true, "Clean UI proposal successfully reaches OMP core dispatch");
   assert.equal(coreResult.xdev.inner.planFilePath, "local://fixed-feature-plan.md");
   assert.equal(coreSelectedPlan, "local://fixed-feature-plan.md", "Human review dialog opens with the approved plan!");
 
@@ -232,9 +263,9 @@ try {
     "## Context",
     "Refined in-tree implementation.",
     "## Approach",
-    "Step 1: refine approach with additional tests.",
+    "1. Refine `src/plan-validator.ts#validatePlanStructure` with additional checks.",
     "## Verification",
-    "bun run check && bun tests/e2e-real-plan-handoff.mjs",
+    "- `bun run check && bun tests/e2e-real-plan-handoff.mjs` → exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "refined-feature-plan.md"), refinedFeatureContent, "utf8");
 
@@ -255,15 +286,16 @@ try {
   assert.equal(coreRefinedResult.xdev.inner.planFilePath, "local://refined-feature-plan.md");
 
   process.stdout.write(`${JSON.stringify({
-    schema: "omp-plan-kit-real-handoff-e2e@3",
+    schema: "omp-plan-kit-real-handoff-e2e@4",
     decision: "pass",
     scenarios: {
       zeroWasteOnIntermediateTodo: true,
       validatorBlockedInvalidStructure: true,
+      validatorBlockedNonActionablePlan: true,
       advisorRanOnDefectivePlan: true,
       advisorBlockedDefectivePlan: true,
       advisorRanOnCleanPlan: true,
-      cleanPlanApprovedAndDispatchedToCore: true,
+      cleanUIPlanApprovedAndDispatchedToCore: true,
       unchangedPlanHitCache: true,
       refineResetsCycleAndDispatchesRefinedPlan: true,
     },

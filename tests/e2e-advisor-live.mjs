@@ -67,9 +67,9 @@ try {
     "## Context",
     "Modify upstream OMP authority interfaces and core runtime.",
     "## Approach",
-    "1. Edit upstream OMP source.",
+    "1. Edit upstream OMP source in `src/extensibility/authority.ts`.",
     "## Verification",
-    "Run tests.",
+    "- `bun test` → exit code 0",
   ].join("\n");
   await fs.writeFile(
     path.join(localRoot, "bad-feature-plan.md"),
@@ -94,10 +94,10 @@ try {
     "## Context",
     "Implement local formatting helpers strictly within this project repository. Zero changes to upstream OMP or authority ABI.",
     "## Approach",
-    "1. Contract: formatNumber(value: number, decimals?: number): string. Formats numbers with comma thousands separator (1234.5 -> '1,234.50'). Handle 0, negative values, and decimals in src/utils.ts.",
-    "2. Add unit tests in tests/utils.test.ts covering edge cases (0, negative, decimals).",
+    "1. Contract: `formatNumber()` in `src/utils.ts`. Formats numbers with comma thousands separator (1234.5 -> '1,234.50'). Handle 0, negative values, and decimals in `src/utils.ts`.",
+    "2. Add unit tests in `tests/utils.test.ts` covering edge cases (0, negative, decimals).",
     "## Verification",
-    "Run bun test to confirm 100% assertions pass.",
+    "- `bun test` → confirm 100% assertions pass",
   ].join("\n");
   await fs.writeFile(
     path.join(localRoot, "clean-feature-plan.md"),

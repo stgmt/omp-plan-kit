@@ -128,9 +128,9 @@ async function main() {
       "## Context",
       "New plan context description.",
       "## Approach",
-      "NEW_PLAN_MARKER: Implementation details.",
+      "1. NEW_PLAN_MARKER: Implementation details in `src/feature.ts`.",
       "## Verification",
-      "Verification commands.",
+      "- `bun test` → exit code 0",
     ].join("\n");
     await fs.writeFile(path.join(localRoot, "new-plan.md"), validNewPlan, "utf8");
     const allowed = await handlers[0]({ toolName: "write", toolCallId: "good", input: { path: "xd://propose", content: "new" } }, context);
