@@ -657,10 +657,10 @@ function planProtection(pi) {
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));
 }
 export {
-  validatePlanStructure,
-  setTestDependencies,
-  issueSignature,
-  formatRepairPacket,
+  createPlanProtectionForTest,
   planProtection as default,
-  createPlanProtectionForTest
+  formatRepairPacket,
+  issueSignature,
+  setTestDependencies,
+  validatePlanStructure
 };

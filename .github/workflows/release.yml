@@ -34,6 +34,8 @@ jobs:
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.1"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -66,6 +68,7 @@ jobs:
 
           if [ "${COMMITTED_SHA}" != "${REBUILT_SHA}" ]; then
             echo "::error::dist/extension.js rebuild mismatch! Committed: ${COMMITTED_SHA}, Rebuilt: ${REBUILT_SHA}"
+            git diff dist/extension.js || true
             exit 1
           fi
 
