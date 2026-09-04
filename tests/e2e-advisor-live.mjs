@@ -61,10 +61,19 @@ try {
   );
   assert.equal(notifications.length, initialNotifCount, "Intermediate todo operations must never trigger the advisor");
 
-  // Step 3: Write defective plan artifact to disk (violates negative scope)
+  // Step 3: Write defective plan artifact to disk (structurally valid, but violates negative scope)
+  const badPlanContent = [
+    "# Bad Feature Plan",
+    "## Context",
+    "Modify upstream OMP authority interfaces and core runtime.",
+    "## Approach",
+    "1. Edit upstream OMP source.",
+    "## Verification",
+    "Run tests.",
+  ].join("\n");
   await fs.writeFile(
     path.join(localRoot, "bad-feature-plan.md"),
-    "# Bad Feature Plan\n\n## Scope\nModify upstream OMP authority interfaces and core runtime.\n\n## Tasks\n1. Edit upstream OMP source.\n",
+    badPlanContent,
     "utf8",
   );
 
@@ -80,25 +89,19 @@ try {
 
   // Step 5: Write a sound, concrete clean plan artifact with complete contract and propose it -> live advisor APPROVES
   const notifCountBeforeClean = notifications.length;
+  const cleanPlanContent = [
+    "# Clean Feature Plan",
+    "## Context",
+    "Implement local formatting helpers strictly within this project repository. Zero changes to upstream OMP or authority ABI.",
+    "## Approach",
+    "1. Contract: formatNumber(value: number, decimals?: number): string. Formats numbers with comma thousands separator (1234.5 -> '1,234.50'). Handle 0, negative values, and decimals in src/utils.ts.",
+    "2. Add unit tests in tests/utils.test.ts covering edge cases (0, negative, decimals).",
+    "## Verification",
+    "Run bun test to confirm 100% assertions pass.",
+  ].join("\n");
   await fs.writeFile(
     path.join(localRoot, "clean-feature-plan.md"),
-    `# Clean Feature Plan
-
-## Objective
-Implement local formatting helpers strictly within this project repository. Zero changes to upstream OMP or authority ABI.
-
-## Contract
-- Signature: formatNumber(value: number, decimals?: number): string
-- Output: Formats numbers with comma thousands separator (1234.5 -> "1,234.50").
-- Handled edge cases: 0, negative values, and decimals.
-
-## Tasks
-1. Implement formatNumber in src/utils.ts.
-2. Add unit tests in tests/utils.test.ts.
-
-## Verification
-Run bun test to confirm 100% assertions pass.
-`,
+    cleanPlanContent,
     "utf8",
   );
   const allowedProposal = await toolHandler(

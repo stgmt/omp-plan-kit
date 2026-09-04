@@ -6,36 +6,22 @@
 **OMP Plan Kit is the planning kit for Oh My Pi (OMP): it keeps the plan proposed, approved,
 executed, and later reviewed as the same plan.**
 
-The first released capability is a deterministic stale-plan guard for OMP plan mode. The kit
-will grow into a structured, human-readable, AI-readable, and OMP Spec Kit-synchronized plan
-workflow.
+OMP Plan Kit provides deterministic stale-plan protection, structural plan validation, bounded
+repair convergence, and native LLM review for OMP plan mode.
 
-- **Hard safety first:** malformed `xd://propose` handoffs fail closed before OMP dispatch.
-- **Optional bounded review:** a native OMP advisor explains concrete findings without approving
-  or rewriting a plan.
-- **Global user installation:** install through the official OMP plugin manager.
-- **Roadmap-driven growth:** plan structure, readability, plan-pomogator workflow, and Spec Kit
-  synchronization are documented in [`ROADMAP.md`](ROADMAP.md).
-- **Manual proof:** installed-package E2E covers mutations, stale-plan controls, profiles,
-  rollback, and native advisor behavior.
-
-## Why OMP Plan Kit exists
-
-OMP Plan Kit started from [the incident reported in OMP issue #10333](https://github.com/can1357/oh-my-pi/issues/10333):
-after a plan-scope correction, OMP accepted an older plan instead of the plan the user had
-just reviewed. The reported impact was roughly half of one week's Codex allowance on the
-maximum subscription tier.
-
-The kit is intended to control this class of leakage and similar failures: malformed plan
-identity, stale approval fallback, missing artifacts, scope/todo drift, revision mismatch,
-and later plan/spec drift as the roadmap grows.
+- **Deterministic preflight:** strict slug grammar, session-local path containment, and exact artifact existence checks.
+- **Batch structural validation:** all independent structural errors returned in one actionable repair packet.
+- **Bounded convergence:** strict limits on failures, unchanged files, and no-progress churn to prevent infinite correction loops.
+- **Optional bounded advisor:** native OMP LLM review explains concrete defects without rewriting the plan.
+- **Native review boundary:** only verified, approved plans reach OMP's human-review overlay.
+- **Global installation:** install across OMP profiles via official plugin management.
 
 ## Quick start
 
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.1.0
+omp plugin install github:stgmt/omp-plan-kit#v1.2.0
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -45,8 +31,7 @@ installer from a checkout:
 node scripts/install-all-profiles.mjs
 ```
 
-Restart OMP after installing or upgrading an extension package. Existing sessions do not rebuild
-every initialized extension set in place.
+Restart OMP after installing or upgrading an extension package.
 
 ### Verify installation
 
@@ -61,214 +46,167 @@ For a named profile:
 omp --profile live-test plugin list --json
 ```
 
-## What OMP Plan Kit prevents today
+## Runtime pipeline
 
-OMP's `xd://propose` device expects a plan title/slug. If a caller sends the entire Markdown plan,
-OMP may fail to reconstruct the intended `local://<slug>-plan.md` and enter a discovery/state
-fallback. If an older plan exists, the wrong plan can be approved.
-
-The current kit blocks that exact failure before OMP executes the write:
-
-1. The proposal payload must be one strict slug.
-2. The exact `local://<slug>-plan.md` artifact must already exist in the session local root.
-3. Missing or unsafe artifacts are rejected; another plan is never substituted.
-4. The exact artifact receives a SHA-256 receipt for forensic identity.
-5. The hard decision uses no model, proxy, or transcript.
-
-## Runtime architecture
+Handoff follows a strict four-stage pipeline when exiting plan mode (`write xd://propose <slug>`):
 
 ```text
-OMP write(path=xd://propose, content=...)
+OMP write(path=xd://propose, content=<slug>)
                     │
                     ▼
-          OMP Plan Kit extension
-          ├─ strict slug validation
-          ├─ exact session-local path
-          ├─ file + SHA-256 preflight
-          └─ block or pass unchanged
+          1. Exact Preflight (0 tokens)
+          ├─ strict slug format (1-120 chars)
+          ├─ resolve local://<slug>-plan.md
+          ├─ path traversal / containment check
+          ├─ file existence and regular-file check
+          └─ compute SHA-256
                     │
                     ▼
-            OMP plan resolver
+          2. Plan Validator & Convergence (0 tokens)
+          ├─ sticky turn latch check (MAX_TURN_PROPOSALS = 4)
+          ├─ unchanged SHA check (MAX_SAME_HASH_REPEATS = 2)
+          ├─ validate canonical sections (## Context, ## Approach, ## Verification)
+          ├─ progress tracking (fewer issues vs churn, MAX_NO_PROGRESS_ATTEMPTS = 2)
+          ├─ batch repair packet (MAX_FAILED_VALIDATIONS = 3)
+          └─ sticky stop if budget exceeded (no ctx.abort overwrite)
+                    │
+                    ▼
+          3. Optional Native Advisor (LLM exit-gate)
+          ├─ in-session SHA-256 cache (zero extra tokens on repeat)
+          ├─ budget check (max 3 calls per session, 160 tokens)
+          ├─ bounded prompt + redacted plan excerpt
+          └─ APPROVE or REJECT with concise critique
+                    │
+                    ▼
+          4. OMP Native Review
+          └─ open human review overlay (selectPlan)
 ```
 
-The programmer guard is the authority for allow/block. The optional advisor is explanatory only.
-It cannot approve, rewrite, or unblock a rejected handoff.
+## Plan structure contract
+
+The validator parses Markdown level `##` headings outside of code fences:
+
+### Mandatory sections (in exact canonical order)
+
+1. `## Context` — problem description, current state, and background.
+2. `## Approach` — step-by-step implementation changes and technical details.
+3. `## Verification` — concrete commands and observable verification checks.
+
+### Optional sections (strictly constrained placement)
+
+- `## Critical files & anchors` — allowed once, strictly between `Approach` and `Verification`.
+- `## Assumptions & contingencies` — allowed once, strictly after `Verification`.
+
+Headings inside code fences (``` or ~~~) are ignored. Sections must contain non-whitespace body text. Dependent errors (e.g., reporting `SECTION_EMPTY` or `SECTION_ORDER` for a section that is already `SECTION_MISSING`) are suppressed.
+
+## All-errors repair packet
+
+When a plan violates the structural contract, the validator collects **all** independent issues in a single pass and returns a complete repair packet to the model:
+
+```text
+[PLAN_VALIDATOR_BLOCK] Plan validation failed (Attempt 1 of 3):
+
+1. [SECTION_MISSING] Context: Required section "Context" is missing. Fix: Add "## Context" section to the plan.
+2. [SECTION_ORDER] Approach, line 15: Section "Approach" at line 15 is out of order (must appear before "Verification"). Fix: Move "## Approach" before "## Verification".
+
+Fix every issue above in local://<slug>-plan.md, keep the same slug, reread the complete plan, and do not call xd://propose until all listed issues are fixed.
+```
+
+## Bounded convergence and turn limits
+
+To protect against infinite repair loops and wasted context, the controller enforces hard, deterministic limits:
+
+| Limit | Value | Behavior on limit |
+|---|---|---|
+| `MAX_FAILED_VALIDATIONS` | 3 | Sticky stop for this slug; model told to wait for operator feedback |
+| `MAX_SAME_HASH_REPEATS` | 2 | Sticky stop when proposing unchanged invalid plan without edits |
+| `MAX_NO_PROGRESS_ATTEMPTS` | 2 | Sticky stop when hash changes but issue count does not decrease |
+| `MAX_TURN_PROPOSALS` | 4 | 5th proposal in a turn sets `turn.blocked = true` (`[PLAN_VALIDATOR_TURN_BLOCKED]`) |
+
+### Sticky turn latch vs `ctx.abort()`
+
+The controller uses a **sticky turn latch** instead of calling `ctx.abort()`. In OMP, invoking `ctx.abort()` inside a `tool_call` hook aborts the operation and overwrites the structured error message with a generic abort failure, hiding the exact defect list from the model and user. The sticky turn latch preserves the full `[PLAN_VALIDATOR_STOPPED]` diagnostic in the transcript while ensuring all subsequent handoff attempts in that turn return immediately in $O(1)$ without disk reads, validation runs, or advisor calls.
+
+### Reset on new prompt or native Refine
+
+Starting a new user turn (`before_agent_start`) or triggering OMP's native `Refine plan` action increments `turnId`, clears turn/cycle blocks, and grants a fresh budget for the next iteration.
+
+## Batch tool-call race condition
+
+In OMP (`agent-loop.ts:2458-2469`), when a model outputs multiple tool calls in a single response (e.g. `write local://<slug>-plan.md` followed by `write xd://propose <slug>`), OMP executes all `tool_call` extension hooks **before** writing any file to disk.
+
+Therefore, the plan file must be written in one turn, and `write xd://propose <slug>` must be called in a **subsequent turn** after the file write succeeds. Emitting both in the same batch triggers `PLAN_FILE_MISSING` by design.
 
 ## Optional native OMP advisor (exit-gate)
 
-The advisor is an economical exit-gate that runs **only** at plan handoff (`write xd://propose <slug>`) on the completed `local://<slug>-plan.md` artifact.
+The advisor is an economical exit-gate that runs strictly after structural validation passes:
 
-- **Zero waste on planning**: intermediate steps (todo updates, reads, scratch edits) spend zero advisor tokens.
-- **Deterministic blocks cost zero tokens**: malformed slugs, traversal, or missing artifacts are rejected as `PLAN_HANDOFF_*` before any model call.
-- **LLM review at handoff**: the advisor receives the user's objective/constraints + the exact plan excerpt (redacted, bounded) and returns `APPROVE` or `REJECT`.
-  - `REJECT` → hard block `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>` before the OMP human-review overlay opens; the agent stays in plan mode.
-  - `APPROVE` → the handoff passes through to OMP core dispatch unchanged.
+- **Zero tokens on invalid plans**: syntax and structural failures block before the advisor runs.
 - **Cache**: an unchanged plan re-proposal hits an in-session `SHA-256` cache and spends zero additional tokens.
-
-It uses OMP's own model runtime:
-
-```text
-ctx.models.resolve("@advisor")
-ctx.modelRegistry.getApiKey(model)
-complete(model, context, { maxTokens: 160, disableReasoning: true })
-```
-
-Budget and context rules:
-
-- maximum three calls per OMP session;
-- zero cooldown by default (`OMP_PLAN_ADVISOR_COOLDOWN_MS=0`) and plan-content-hash cache;
-- 160 output tokens maximum, reasoning disabled;
-- bounded redacted evidence only, never the full transcript;
-- result is a UI notification, not a message inserted into the main model context;
-- model failure never weakens the programmer guard (fail-open to approve).
+- **LLM review**: evaluates safety, repository boundaries, and concrete verification.
+  - `REJECT` → hard block `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>`; agent stays in plan mode.
+  - `APPROVE` → proposal passes through to OMP core dispatch.
 
 Configuration:
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `OMP_PLAN_ADVISOR` | `1` | Set `0` to disable only the advisor |
+| `OMP_PLAN_ADVISOR` | `1` | Set `0` to disable only the LLM advisor |
 | `OMP_PLAN_ADVISOR_MAX_CALLS` | `3` | Per-session advisor call cap |
 | `OMP_PLAN_ADVISOR_COOLDOWN_MS` | `0` | Duplicate/cooldown window (0 = cache-only) |
 | `OMP_PLAN_ADVISOR_TIMEOUT_MS` | `15000` | Native OMP model-call timeout |
 | `OMP_PLAN_ADVISOR_MAX_TOKENS` | `160` | Output-token cap, clamped to 32–256 |
 | `OMP_PLAN_ADVISOR_MODEL` | `@advisor` | OMP model or role resolved by `ctx.models` |
 
-## Roadmap
+## Verification battery
 
-The product roadmap is intentionally staged:
-
-1. handoff identity and revision receipts;
-2. plan structure and completeness;
-3. human and AI readability;
-4. plan-pomogator workflow with durable corrections, requirements, tasks, and evidence;
-5. synchronization with the project's OMP Spec Kit graph;
-6. review, approval, and evidence UX;
-7. distribution and ecosystem integrations.
-
-Read the full milestones, release gates, non-goals, and Spec Kit integration contract in
-[`ROADMAP.md`](ROADMAP.md).
-
-## Manual verification
-
-These are manual runtime probes, not a generic automated test-suite claim.
-
-### Programmer mutations and edge cases
+All behavioral probes live in `tests/`:
 
 ```bash
-npm run e2e:programmer
+bun tests/e2e-plan-validator.mjs          # batch structural validator contract
+bun tests/e2e-convergence-controller.mjs  # convergence limits, progress, sticky latches
+bun tests/e2e-programmer.mjs              # slug mutations, edge cases, profile loader
+bun tests/e2e-advisor-contract.mjs        # advisor budget, token caps, cache deduplication
+bun tests/e2e-real-plan-handoff.mjs       # real in-process OMP dispatch & review overlay
+bun tests/e2e-advisor-live.mjs            # live model verification (gpt-5.6-sol)
 ```
 
-The probe loads the installed release package through OMP's real loader and exercises:
-
-- full Markdown, empty, whitespace, and traversal payloads;
-- missing exact artifact;
-- unrelated writes;
-- valid exact slug/artifact;
-- deletion of the exact artifact while an old plan remains;
-- an unguarded-core control showing the stale selection;
-- every existing OMP profile's installed package and loader import.
-
-### Advisor budget and trigger behavior
+Run all tests:
 
 ```bash
-npm run e2e:advisor
+npm run check
+bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
 ```
-
-The probe verifies zero waste on syntax errors and intermediate todo steps, advisor execution on
-defective plans (blocking with `[PLAN_ADVISOR_BLOCK]`), approval on clean plans, in-session
-`SHA-256` cache hits, bounded request shape (`maxTokens: 160`, `disableReasoning: true`), and
-signal timeouts.
-
-### Real in-process handoff with OMP core
-
-```bash
-npm run e2e:handoff
-```
-
-Loads the installed package through OMP's real loader, drives a real `write xd://propose` handoff
-against `dispatchResolutionDevice` and `resolveApprovedPlan`, and proves: zero waste on `todo`,
-advisor rejection before core dispatch, clean-plan approval reaching the human-review overlay,
-and cache deduplication on unchanged re-proposals.
-
-### Live native OMP model path
-
-```bash
-npm run e2e:advisor:live
-```
-
-Performs two real native OMP `complete()` calls via the configured `@advisor` model
-(`openai-codex/gpt-5.6-sol` by default): defective plan is rejected, clean concrete plan is
-approved — both with bounded UI advisories and without exposing credentials.
 
 ### Rollback and reinstall
 
 ```bash
-npm run uninstall-global
-node scripts/install-all-profiles.mjs
+omp plugin uninstall omp-plan-kit
+omp plugin install github:stgmt/omp-plan-kit#v1.1.0
 ```
-
-The helpers use the official OMP user plugin lifecycle for every current profile.
 
 ## Repository map
 
 ```text
-src/extension.ts                       current extension implementation
-dist/extension.js                      shipped OMP plugin entrypoint
+src/plan-validator.ts                  deterministic structural plan validator & repair packet
+src/extension.ts                       convergence controller, preflight & advisor entrypoint
+dist/extension.js                      shipped OMP plugin bundle
 ROADMAP.md                             product direction and release gates
-llms.txt                               concise AI-readable project facts
-scripts/install-all-profiles.mjs       official CLI link across current profiles
-scripts/uninstall-all-profiles.mjs     official CLI uninstall across current profiles
-tests/e2e-programmer.mjs               manual loader, mutation, and edge probe
-tests/e2e-advisor-contract.mjs         advisor contract (budget, bounds, cache)
-tests/e2e-real-plan-handoff.mjs        real in-process handoff with OMP core
-tests/e2e-advisor-live.mjs             two real native OMP model calls
-.omp/rules/tests.md                    project rule: test discipline (dogfood)
-audit-reports/                         source grounding, release, and install evidence
+scripts/install-all-profiles.mjs       CLI install across current PC profiles
+scripts/uninstall-all-profiles.mjs     CLI uninstall across current PC profiles
+tests/e2e-plan-validator.mjs           structural validator tests (missing, duplicate, order, empty)
+tests/e2e-convergence-controller.mjs   convergence tests (churn, repeats, slug hopping, reset)
+tests/e2e-programmer.mjs               mutation and edge probe against OMP loader
+tests/e2e-advisor-contract.mjs         advisor bounds, token caps, cache deduplication
+tests/e2e-real-plan-handoff.mjs        real in-process handoff with OMP dispatchResolutionDevice
+tests/e2e-advisor-live.mjs             live native model review verification
+audit-reports/                         evidence, architecture decisions, and release notes
 ```
-
-## FAQ
-
-### What is OMP Plan Kit?
-
-It is an Oh My Pi plugin for safe, structured, and eventually spec-synchronized AI coding plans.
-The current release protects plan identity; later releases add completeness, readability,
-plan-pomogator workflow, and OMP Spec Kit integration.
-
-### Does the hard guard need an LLM?
-
-No. The hard guard uses the OMP tool event, slug grammar, exact session-local file path, file
-existence, containment, and SHA-256. The advisor only explains deterministic findings.
-
-### Does OMP Plan Kit replace OMP's resolver?
-
-No. It runs before the resolver and blocks inputs that could activate an unsafe fallback. Valid
-slug-based plan flow is passed through unchanged.
-
-### Can it understand a todo semantically?
-
-Not deterministically from arbitrary prose. The roadmap therefore plans a structured requirement,
-plan, task, and scope contract. Until then, the advisor is advisory and the artifact identity
-guard remains the hard boundary.
-
-### Is the plugin global?
-
-It is a user-scope plugin in each installed OMP profile. OMP profile roots are isolated, so run
-the profile-aware installer after creating a new named profile.
-
-### What happens when the advisor model is unavailable?
-
-The advisor records a bounded failure and stays out of the way. A malformed proposal remains
-blocked by the programmer guard.
-
-### How do I report a stale-plan bug?
-
-Do not publish credentials, private plan contents, or a full transcript. Include the OMP version,
-profile, proposal payload shape, expected/selected plan identity, and redacted manual E2E output.
 
 ## Release
 
-Current release: [`v1.0.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.0.1).
+Current release: [`v1.2.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.2.0).
 
-Manual release report: `audit-reports/omp-plan-kit-v1.0.1-review.md`.
+Release review report: `audit-reports/omp-plan-kit-v1.2.0-review-2026-09-04.md`.
 
 License: MIT.
