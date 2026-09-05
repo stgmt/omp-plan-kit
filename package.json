@@ -1,6 +1,6 @@
 {
   "name": "omp-plan-kit",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Global Oh My Pi (OMP) plan kit with actionable plan contracts, deterministic plan validation, and bounded repair convergence.",
   "author": "stgmt",
   "homepage": "https://github.com/stgmt/omp-plan-kit#readme",

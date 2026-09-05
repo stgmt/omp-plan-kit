@@ -159,8 +159,7 @@ function isVerificationActionable(lines, primaryLine, endIndex, lineFenceState) 
           const nextLine = lines[k].trim();
           if (nextLine.length === 0)
             continue;
-          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|\u041E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F|\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E):\s*(\S.*)$/iu);
-          if (expMatch && expMatch[1].trim().length > 0) {
+          if (!/^#{1,6}\s/.test(nextLine)) {
             return true;
           }
           break;
@@ -325,7 +324,7 @@ function validatePlanStructure(markdown) {
         section: "Verification",
         line: primary.line,
         message: "Verification has no actionable proof",
-        fix: "Add <command or exact surface> \u2192 <observable expected result>, or a fenced command followed by `Expected:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E:` <observable result>."
+        fix: "Add <command or exact surface> \u2192 <observable expected result>, or a fenced command block followed immediately by a line stating the observable result (any language; `Expected:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E:` markers are accepted but not required)."
       });
     }
   }

@@ -187,7 +187,11 @@ function isVerificationActionable(
     }
   }
 
-  // Form 2: non-empty fenced code block followed by Expected: / Ожидается: / Ожидаемо:
+  // Form 2: non-empty fenced code block followed immediately (skipping blank
+  // lines) by a non-empty result line. The result statement is positional and
+  // language-neutral: any non-empty line that is not a Markdown heading names
+  // the observable result, in any language. Legacy marker tokens (Expected: /
+  // Ожидается: / Ожидаемо:) still work because they are just result lines.
   for (let idx = startIdx; idx < endIdx; idx++) {
     const line = lines[idx];
     const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
@@ -209,15 +213,15 @@ function isVerificationActionable(
       }
 
       if (closeIdx !== -1 && hasBlockContent) {
-        // Look for the closest non-empty line after closeIdx within this section
+        // The first non-empty line after the closing fence is the result
+        // statement. A heading is structure, not a result: it does not qualify.
         for (let k = closeIdx + 1; k < endIdx; k++) {
           const nextLine = lines[k].trim();
           if (nextLine.length === 0) continue;
-          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|Ожидается|Ожидаемо):\s*(\S.*)$/iu);
-          if (expMatch && expMatch[1].trim().length > 0) {
+          if (!/^#{1,6}\s/.test(nextLine)) {
             return true;
           }
-          // The first non-empty line after code block is NOT Expected:, so this block doesn't qualify
+          // A heading right after the block is not an observable result.
           break;
         }
         idx = closeIdx;
@@ -402,7 +406,7 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
         section: "Verification",
         line: primary.line,
         message: "Verification has no actionable proof",
-        fix: 'Add <command or exact surface> → <observable expected result>, or a fenced command followed by `Expected:` / `Ожидается:` / `Ожидаемо:` <observable result>.',
+        fix: 'Add <command or exact surface> → <observable expected result>, or a fenced command block followed immediately by a line stating the observable result (any language; `Expected:` / `Ожидается:` / `Ожидаемо:` markers are accepted but not required).',
       });
     }
   }

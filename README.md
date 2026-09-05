@@ -228,7 +228,7 @@ audit-reports/                         evidence, architecture decisions, and rel
 
 ## Release
 
-Current release: [`v1.3.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.3.1).
+Current release: [`v1.4.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.4.0).
 
 Release review report: `audit-reports/omp-plan-kit-v1.3.0-review-2026-09-04.md`.
 

@@ -118,10 +118,10 @@ const SCENARIOS = [
     },
   },
   {
-    id: "V-hint-tokens",
-    given: "a plan whose verification has a fenced command but no expected-result line",
+    id: "V-hint-position",
+    given: "a plan whose verification has a fenced command but no result line",
     when: "validatePlanStructure runs",
-    then: "the VERIFICATION_NOT_ACTIONABLE fix names all accepted tokens",
+    then: "the VERIFICATION_NOT_ACTIONABLE fix demands an immediately following result line in any language",
     kind: "validator",
     input: [
       "## Context",
@@ -136,32 +136,8 @@ const SCENARIOS = [
     assert(issues) {
       const verif = issues.find((i) => i.code === "VERIFICATION_NOT_ACTIONABLE");
       assert.ok(verif, "verification without proof must be reported");
-      assert.match(verif.fix, /`Expected:` \/ `Ожидается:` \/ `Ожидаемо:`/);
-    },
-  },
-  {
-    id: "V-immediate-expected",
-    given: "a fenced command followed by a non-expected line before the Expected: token",
-    when: "validatePlanStructure runs",
-    then: "the verification is not actionable",
-    kind: "validator",
-    input: [
-      "## Context",
-      "Контекст.",
-      "## Approach",
-      "1. Обновить `src/plan-validator.ts`.",
-      "## Verification",
-      "```sh",
-      "npm test",
-      "```",
-      "Проверяем тесты.",
-      "Expected: всё зелёное",
-    ].join("\n"),
-    assert(issues) {
-      assert.equal(
-        issues.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1,
-        "Expected: must immediately follow the fenced block"
-      );
+      assert.match(verif.fix, /followed immediately by a line stating the observable result \(any language/);
+      assert.match(verif.fix, /markers are accepted but not required/);
     },
   },
   {
@@ -180,6 +156,131 @@ const SCENARIOS = [
     ].join("\n"),
     assert(issues) {
       assert.deepEqual(issues, [], "minimal valid plan must pass");
+    },
+  },
+  {
+    id: "V-positional-any-language",
+    given: "a fenced command followed by a result line in German",
+    when: "validatePlanStructure runs",
+    then: "no issues are returned",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "npm test",
+      "```",
+      "Erwartet: alle Tests grün",
+    ].join("\n"),
+    assert(issues) {
+      assert.deepEqual(issues, [], "positional result line in any language must pass");
+    },
+  },
+  {
+    id: "V-positional-chinese",
+    given: "a fenced command followed by a Chinese result line",
+    when: "validatePlanStructure runs",
+    then: "no issues are returned",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "npm test",
+      "```",
+      "预期：全部通过",
+    ].join("\n"),
+    assert(issues) {
+      assert.deepEqual(issues, [], "Chinese result line must pass");
+    },
+  },
+  {
+    id: "V-blank-between-block-and-result",
+    given: "a blank line between the fenced block and the result line",
+    when: "validatePlanStructure runs",
+    then: "no issues are returned",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "npm test",
+      "```",
+      "",
+      "Erwartet: alle Tests grün",
+    ].join("\n"),
+    assert(issues) {
+      assert.deepEqual(issues, [], "blank line before the result line must still pass");
+    },
+  },
+  {
+    id: "V-block-no-result",
+    given: "a fenced command with nothing after it",
+    when: "validatePlanStructure runs",
+    then: "verification is not actionable",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "npm test",
+      "```",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+    },
+  },
+  {
+    id: "V-heading-after-block",
+    given: "a fenced command followed by a Markdown heading",
+    when: "validatePlanStructure runs",
+    then: "the heading is structure, not a result, so verification is not actionable",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "npm test",
+      "```",
+      "### Next steps",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+    },
+  },
+  {
+    id: "V-empty-block-rejected",
+    given: "an empty fenced block followed by a result line",
+    when: "validatePlanStructure runs",
+    then: "verification is not actionable because the block carries no command",
+    kind: "validator",
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/feature.ts`.",
+      "## Verification",
+      "```sh",
+      "```",
+      "Erwartet: alle Tests grün",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
     },
   },
   {
@@ -257,34 +358,6 @@ const BUDGET_BLOCK = `        turn.proposalCount += 1;
 
 const MUTATIONS = [
   {
-    id: "M-drop-expected",
-    file: VALIDATOR,
-    why: "English Expected: token must stay accepted",
-    from: "(?:Expected|Ожидается|Ожидаемо):",
-    to: "(?:Ожидается|Ожидаемо):",
-  },
-  {
-    id: "M-drop-ozhidaetsya",
-    file: VALIDATOR,
-    why: "the production bug: natural Russian Ожидается: must be accepted",
-    from: "(?:Expected|Ожидается|Ожидаемо):",
-    to: "(?:Expected|Ожидаемо):",
-  },
-  {
-    id: "M-drop-ozhidaemo",
-    file: VALIDATOR,
-    why: "v1.3.0 backward compatibility must keep Ожидаемо:",
-    from: "(?:Expected|Ожидается|Ожидаемо):",
-    to: "(?:Expected|Ожидается):",
-  },
-  {
-    id: "M-drop-bullet-prefix",
-    file: VALIDATOR,
-    why: "bullet/number continuation before the token must stay accepted",
-    from: "/^(?:[-*]\\s+|\\d+[.)]\\s+)?(?:Expected",
-    to: "/^(?:Expected",
-  },
-  {
     id: "M-generic-section-hint",
     file: VALIDATOR,
     why: "SECTION_MISSING hint must state the exact English heading literal",
@@ -294,8 +367,8 @@ const MUTATIONS = [
   {
     id: "M-generic-verification-hint",
     file: VALIDATOR,
-    why: "VERIFICATION_NOT_ACTIONABLE hint must name all accepted tokens",
-    from: "or a fenced command followed by `Expected:` / `Ожидается:` / `Ожидаемо:` <observable result>.",
+    why: "VERIFICATION_NOT_ACTIONABLE hint must demand an immediately following result line in any language",
+    from: "a fenced command block followed immediately by a line stating the observable result (any language; `Expected:` / `Ожидается:` / `Ожидаемо:` markers are accepted but not required).",
     to: "or a fenced command followed by Expected: <observable result>.",
   },
   {
@@ -306,11 +379,25 @@ const MUTATIONS = [
     to: "CANONICAL_SECTIONS.find((s) => title.startsWith(s))",
   },
   {
-    id: "M-late-expected-accepted",
+    id: "M-restore-token-requirement",
     file: VALIDATOR,
-    why: "Expected: must immediately follow the fenced block",
-    from: "          // The first non-empty line after code block is NOT Expected:, so this block doesn't qualify\n          break;",
-    to: "          // The first non-empty line after code block is NOT Expected:, so this block doesn't qualify",
+    why: "the production bug class: requiring a language-specific marker token rejects result lines in other languages",
+    from: "          if (!/^#{1,6}\\s/.test(nextLine)) {\n            return true;\n          }",
+    to: "          if (!/^#{1,6}\\s/.test(nextLine) && /^(?:[-*]\\s+|\\d+[.)]\\s+)?(?:Expected|Ожидается|Ожидаемо):/iu.test(nextLine)) {\n            return true;\n          }",
+  },
+  {
+    id: "M-allow-heading-as-result",
+    file: VALIDATOR,
+    why: "a heading right after the block is structure, not an observable result",
+    from: "          if (!/^#{1,6}\\s/.test(nextLine)) {\n            return true;\n          }",
+    to: "          return true;",
+  },
+  {
+    id: "M-ignore-block-content",
+    file: VALIDATOR,
+    why: "an empty fenced block carries no command and must not qualify",
+    from: "      if (closeIdx !== -1 && hasBlockContent) {",
+    to: "      if (closeIdx !== -1) {",
   },
   {
     id: "M-budget-counts-malformed",

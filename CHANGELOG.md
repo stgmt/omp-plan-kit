@@ -2,6 +2,23 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.4.0] - 2026-09-05
+
+### Changed
+
+- `VERIFICATION_NOT_ACTIONABLE` form 2 is now positional and language-neutral (`src/plan-validator.ts`): a non-empty fenced command block must be followed (skipping blank lines) by a non-empty result line in ANY language. The language-specific marker token requirement (`Expected:` / `Ожидаемо:` in v1.2.0, `+ Ожидается:` in v1.3.1) is removed: markers are still accepted as ordinary result lines but are no longer required. A Markdown heading right after the block is structure, not a result, and does not qualify.
+- `VERIFICATION_NOT_ACTIONABLE` repair hint now states the positional contract (any language; markers accepted but not required).
+- This closes the unbounded i18n bug class of the marker whitelist: previously every natural language other than English/Russian produced the same rejection loop that exhausted the repair budget in production on 2026-09-05.
+
+### Added
+
+- Mutation suite scenarios for the positional contract: German and Chinese result lines pass; fenced block with nothing after it is rejected; heading after the block is rejected; empty fenced block stays rejected; blank line between block and result stays accepted. New mutants: restoring the marker requirement, accepting a heading as a result, and dropping the non-empty-block guard are all killed.
+- Validator e2e cases: German/Chinese/positional result lines, blank-line tolerance, no-result and heading-after negative cases.
+
+### Compatibility
+
+- Strictly widening: every plan accepted by v1.3.1 remains accepted; plans with result lines in previously rejected languages now pass. No plan-format breaking changes.
+
 ## [1.3.1] - 2026-09-05
 
 ### Fixed

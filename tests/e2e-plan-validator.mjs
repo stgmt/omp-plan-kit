@@ -313,7 +313,7 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   assert.equal(verifIssuesA[0].message, "Verification has no actionable proof");
   assert.equal(
     verifIssuesA[0].fix,
-    "Add <command or exact surface> → <observable expected result>, or a fenced command followed by `Expected:` / `Ожидается:` / `Ожидаемо:` <observable result>."
+    "Add <command or exact surface> → <observable expected result>, or a fenced command block followed immediately by a line stating the observable result (any language; `Expected:` / `Ожидается:` / `Ожидаемо:` markers are accepted but not required)."
   );
 
   // B. Command without arrow or result
@@ -340,22 +340,71 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   const issuesC = validatePlanStructure(arrowNoResult);
   assert.equal(issuesC.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
 
-  // D. Fenced code block without Expected:
-  const fencedNoExpected = [
+  // D. Fenced block with a non-empty result line in any language passes (positional form)
+{
+  const fencedGerman = [
     "## Context",
     "Context.",
     "## Approach",
-    "1. `src/validator.ts` update",
+    "1. Change `src/feature.ts`.",
     "## Verification",
-    "```bash",
-    "bun test",
+    "```sh",
+    "npm test",
     "```",
-    "Check the output manually.",
+    "Erwartet: alle Tests grün",
   ].join("\n");
-  const issuesD = validatePlanStructure(fencedNoExpected);
-  assert.equal(issuesD.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1);
+  const issuesD = validatePlanStructure(fencedGerman);
+  assert.equal(issuesD.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 0, "positional result line in German must pass");
 
-  // E. Empty fenced code block with Expected:
+  const fencedChinese = fencedGerman.replace("Erwartet: alle Tests grün", "预期：全部通过");
+  assert.equal(
+    validatePlanStructure(fencedChinese).filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 0,
+    "positional result line in Chinese must pass"
+  );
+
+  const fencedBlank = fencedGerman.replace(
+    "```\nErwartet: alle Tests grün",
+    "```\n\nErwartet: alle Tests grün"
+  );
+  assert.equal(
+    validatePlanStructure(fencedBlank).filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 0,
+    "blank line between block and result line must still pass"
+  );
+
+  const fencedToken = fencedGerman.replace("Erwartet: alle Tests grün", "Ожидается: всё зелёное");
+  assert.equal(
+    validatePlanStructure(fencedToken).filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 0,
+    "legacy token result line must keep passing"
+  );
+}
+
+// D2. Fenced block without any result line is still rejected; heading after block is not a result
+{
+  const fencedNothing = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. Change `src/feature.ts`.",
+    "## Verification",
+    "```sh",
+    "npm test",
+    "```",
+  ].join("\n");
+  const issuesD2 = validatePlanStructure(fencedNothing);
+  assert.equal(
+    issuesD2.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1,
+    "fenced block with nothing after it must stay rejected"
+  );
+
+  const fencedHeading = fencedNothing + "\n### Next steps";
+  const issuesD2h = validatePlanStructure(fencedHeading);
+  assert.equal(
+    issuesD2h.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 1,
+    "a heading right after the block is structure, not a result"
+  );
+}
+
+// E. Empty fenced code block with Expected:
   const emptyFenced = [
     "## Context",
     "Context.",
