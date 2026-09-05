@@ -145,8 +145,40 @@ async function main() {
     assert.match(afterDelete.reason, /PLAN_FILE_MISSING/);
     mutations.push({ name: "exact-artifact-deleted-with-old-plan-present", decision: "block", code: "PLAN_FILE_MISSING" });
 
+    // BDD: turn budget counts only preflight-passed handoff attempts.
+    // Given malformed payloads and missing artifacts are rejected uncounted and one counted attempt is used,
+    // When counted valid attempts reach four Then they are still processed;
+    // When a malformed payload arrives at the boundary Then it stays NON_SLUG_PAYLOAD;
+    // When the 5th counted proposal is made Then the turn budget stops it;
+    // When any further proposal arrives Then the sticky latch answers in constant time.
+    await fs.writeFile(path.join(localRoot, "new-plan.md"), validNewPlan, "utf8");
+    const allowed1 = await handlers[0]({ toolName: "write", toolCallId: "budget-1", input: { path: "xd://propose", content: "new" } }, context);
+    assert.equal(allowed1, undefined, "1st counted attempt in budget block must pass");
+    const allowed2 = await handlers[0]({ toolName: "write", toolCallId: "budget-2", input: { path: "xd://propose", content: "new" } }, context);
+    assert.equal(allowed2, undefined, "2nd counted attempt in budget block must pass");
+    const allowed3 = await handlers[0]({ toolName: "write", toolCallId: "budget-3", input: { path: "xd://propose", content: "new" } }, context);
+    assert.equal(allowed3, undefined, "3rd counted attempt in budget block must pass");
+    mutations.push({ name: "budget-counted-allowed", decision: "allow", count: 3 });
+
+    const malformedAtBoundary = await handlers[0]({ toolName: "write", toolCallId: "budget-malformed", input: { path: "xd://propose", content: "# full markdown" } }, context);
+    assert.equal(malformedAtBoundary?.block, true, "malformed payload must block");
+    assert.match(malformedAtBoundary.reason, /NON_SLUG_PAYLOAD/, "malformed payload must stay NON_SLUG_PAYLOAD at the budget boundary, not consume budget");
+    mutations.push({ name: "budget-malformed-uncounted", decision: "block", code: "NON_SLUG_PAYLOAD" });
+
+    const budget5th = await handlers[0]({ toolName: "write", toolCallId: "budget-5th", input: { path: "xd://propose", content: "new" } }, context);
+    assert.equal(budget5th?.block, true, "5th counted proposal must block");
+    assert.match(budget5th.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
+    assert.match(budget5th.reason, /Too many proposals without progress/, "5th counted proposal must trip the turn budget");
+    mutations.push({ name: "budget-5th-counted", decision: "block", code: "TURN_BLOCKED" });
+
+    const latched = await handlers[0]({ toolName: "write", toolCallId: "budget-latched", input: { path: "xd://propose", content: "new" } }, context);
+    assert.equal(latched?.block, true, "proposals after the stop must stay blocked");
+    assert.doesNotMatch(latched.reason, /Too many proposals/, "latched proposals must take the sticky constant-time path");
+    assert.match(latched.reason, /budget exceeded for this user turn\. Wait for user feedback/);
+    mutations.push({ name: "budget-sticky-latch", decision: "block", code: "TURN_BLOCKED_LATCHED" });
+
     process.stdout.write(`${JSON.stringify({
-      schema: "omp-plan-kit-programmer-e2e@2",
+      schema: "omp-plan-kit-programmer-e2e@3",
       decision: "pass",
       ompRoot,
       discovery,

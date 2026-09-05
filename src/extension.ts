@@ -322,6 +322,12 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
           };
         }
 
+
+        // Step 1: Deterministic check (0 tokens)
+        const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
+        if (!check.ok) {
+          return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
+        }
         turn.proposalCount += 1;
         if (turn.proposalCount > MAX_TURN_PROPOSALS) {
           turn.blocked = true;
@@ -329,12 +335,6 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
             block: true,
             reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback or native Refine.",
           };
-        }
-
-        // Step 1: Deterministic check (0 tokens)
-        const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
-        if (!check.ok) {
-          return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
         }
 
         // Step 2: Read proposed plan artifact from disk

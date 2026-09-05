@@ -185,6 +185,7 @@ All behavioral probes live in `tests/`:
 
 ```bash
 bun tests/e2e-plan-validator.mjs          # batch structural & actionability validator contract
+bun tests/e2e-validator-mutations.mjs     # BDD scenario x mutation matrix (every mutant must die)
 bun tests/e2e-convergence-controller.mjs  # convergence limits, progress, sticky latches
 bun tests/e2e-programmer.mjs              # slug mutations, edge cases, profile loader
 bun tests/e2e-advisor-contract.mjs        # advisor budget, token caps, cache deduplication
@@ -196,7 +197,7 @@ Run all tests:
 
 ```bash
 npm run check
-bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
+bun tests/e2e-validator-mutations.mjs && bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
 ```
 
 ### Rollback and reinstall
@@ -216,6 +217,7 @@ ROADMAP.md                             product direction and release gates
 scripts/install-all-profiles.mjs       CLI install across current PC profiles
 scripts/uninstall-all-profiles.mjs     CLI uninstall across current PC profiles
 tests/e2e-plan-validator.mjs           structural & actionable validator tests
+tests/e2e-validator-mutations.mjs      BDD scenarios that kill source mutations of the gate
 tests/e2e-convergence-controller.mjs   convergence tests (churn, repeats, slug hopping, reset)
 tests/e2e-programmer.mjs               mutation and edge probe against OMP loader
 tests/e2e-advisor-contract.mjs         advisor bounds, token caps, cache deduplication
@@ -226,7 +228,7 @@ audit-reports/                         evidence, architecture decisions, and rel
 
 ## Release
 
-Current release: [`v1.3.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.3.0).
+Current release: [`v1.3.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.3.1).
 
 Release review report: `audit-reports/omp-plan-kit-v1.3.0-review-2026-09-04.md`.
 

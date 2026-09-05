@@ -187,7 +187,7 @@ function isVerificationActionable(
     }
   }
 
-  // Form 2: non-empty fenced code block followed by Expected: / Ожидаемо:
+  // Form 2: non-empty fenced code block followed by Expected: / Ожидается: / Ожидаемо:
   for (let idx = startIdx; idx < endIdx; idx++) {
     const line = lines[idx];
     const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})/);
@@ -213,7 +213,7 @@ function isVerificationActionable(
         for (let k = closeIdx + 1; k < endIdx; k++) {
           const nextLine = lines[k].trim();
           if (nextLine.length === 0) continue;
-          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|Ожидаемо):\s*(\S.*)$/iu);
+          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|Ожидается|Ожидаемо):\s*(\S.*)$/iu);
           if (expMatch && expMatch[1].trim().length > 0) {
             return true;
           }
@@ -303,7 +303,7 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
         code: "SECTION_MISSING",
         section: req,
         message: `Required section "${req}" is missing`,
-        fix: `Add "## ${req}" section to the plan.`,
+        fix: `Add a section whose heading line is exactly "## ${req}" (English literal; translations, bilingual, or decorated headings are not matched).`,
       });
     }
   }
@@ -402,7 +402,7 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
         section: "Verification",
         line: primary.line,
         message: "Verification has no actionable proof",
-        fix: "Add <command or exact surface> → <observable expected result>, or a fenced command followed by Expected: <observable result>.",
+        fix: 'Add <command or exact surface> → <observable expected result>, or a fenced command followed by `Expected:` / `Ожидается:` / `Ожидаемо:` <observable result>.',
       });
     }
   }

@@ -313,7 +313,7 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
   assert.equal(verifIssuesA[0].message, "Verification has no actionable proof");
   assert.equal(
     verifIssuesA[0].fix,
-    "Add <command or exact surface> → <observable expected result>, or a fenced command followed by Expected: <observable result>."
+    "Add <command or exact surface> → <observable expected result>, or a fenced command followed by `Expected:` / `Ожидается:` / `Ожидаемо:` <observable result>."
   );
 
   // B. Command without arrow or result
@@ -426,6 +426,86 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
 
   const issues = validatePlanStructure(cyrillicPlan);
   assert.equal(issues.length, 0, "Fenced block with Cyrillic 'Ожидаемо:' must pass validator");
+}
+
+// 14b. BDD: Given a plan with a fenced command and natural Russian 'Ожидается:' When validated Then it passes; bullet form also passes
+{
+  const cyrillicPlan2 = [
+    "## Context",
+    "Контекст фичи.",
+    "## Approach",
+    "1. Обновить `src/plan-validator.ts`.",
+    "## Verification",
+    "```bash",
+    "bun test",
+    "```",
+    "Ожидается: все 15 тестов пройдены успешно",
+  ].join("\n");
+
+  const issues2 = validatePlanStructure(cyrillicPlan2);
+  assert.equal(issues2.length, 0, "Fenced block with natural Russian 'Ожидается:' must pass validator");
+
+  const bulleted = cyrillicPlan2.replace(
+    "Ожидается: все 15 тестов пройдены успешно",
+    "- Ожидается: все 15 тестов пройдены успешно"
+  );
+  assert.equal(
+    validatePlanStructure(bulleted).length, 0,
+    "Bulleted 'Ожидается:' must pass validator"
+  );
+}
+
+// 14c. BDD: Given a plan without Context When validated Then SECTION_MISSING fix names the exact heading literal requirement
+{
+  const issues = validatePlanStructure("# Title Only\n");
+  const missing = issues.find((i) => i.code === "SECTION_MISSING" && i.section === "Context");
+  assert.ok(missing, "Context must be reported missing");
+  assert.match(
+    missing.fix,
+    /exactly "## Context"/,
+    "SECTION_MISSING fix must state the exact heading literal"
+  );
+  assert.match(
+    missing.fix,
+    /English literal/,
+    "SECTION_MISSING fix must warn that the heading line must be the English literal"
+  );
+}
+
+// 14d. BDD: Given bilingual translated headings When validated Then every section is missing and no false verification error is raised
+{
+  const bilingual = [
+    "## Context / Контекст",
+    "Контекст.",
+    "## Approach / Подход",
+    "1. Обновить `src/plan-validator.ts`.",
+    "## Verification / Проверка",
+    "```sh",
+    "npm test",
+    "```",
+    "Ожидается: всё зелёное",
+  ].join("\n");
+  const issues = validatePlanStructure(bilingual);
+  assert.equal(issues.filter((i) => i.code === "SECTION_MISSING").length, 3);
+  assert.equal(issues.filter((i) => i.code === "VERIFICATION_NOT_ACTIONABLE").length, 0);
+}
+
+// 14e. BDD: Given a fenced command without any expected-result line When validated Then the fix names all accepted tokens
+{
+  const noProof = [
+    "## Context",
+    "Контекст.",
+    "## Approach",
+    "1. Обновить `src/plan-validator.ts`.",
+    "## Verification",
+    "```sh",
+    "npm test",
+    "```",
+  ].join("\n");
+  const issues = validatePlanStructure(noProof);
+  const verif = issues.find((i) => i.code === "VERIFICATION_NOT_ACTIONABLE");
+  assert.ok(verif, "verification without proof must be reported");
+  assert.match(verif.fix, /`Expected:` \/ `Ожидается:` \/ `Ожидаемо:`/);
 }
 
 // 15. Suppression of target/actionable errors when Approach or Verification is duplicate or empty

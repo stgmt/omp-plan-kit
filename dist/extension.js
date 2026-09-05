@@ -159,7 +159,7 @@ function isVerificationActionable(lines, primaryLine, endIndex, lineFenceState) 
           const nextLine = lines[k].trim();
           if (nextLine.length === 0)
             continue;
-          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E):\s*(\S.*)$/iu);
+          const expMatch = nextLine.match(/^(?:[-*]\s+|\d+[.)]\s+)?(?:Expected|\u041E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F|\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E):\s*(\S.*)$/iu);
           if (expMatch && expMatch[1].trim().length > 0) {
             return true;
           }
@@ -236,7 +236,7 @@ function validatePlanStructure(markdown) {
         code: "SECTION_MISSING",
         section: req,
         message: `Required section "${req}" is missing`,
-        fix: `Add "## ${req}" section to the plan.`
+        fix: `Add a section whose heading line is exactly "## ${req}" (English literal; translations, bilingual, or decorated headings are not matched).`
       });
     }
   }
@@ -325,7 +325,7 @@ function validatePlanStructure(markdown) {
         section: "Verification",
         line: primary.line,
         message: "Verification has no actionable proof",
-        fix: "Add <command or exact surface> \u2192 <observable expected result>, or a fenced command followed by Expected: <observable result>."
+        fix: "Add <command or exact surface> \u2192 <observable expected result>, or a fenced command followed by `Expected:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u0442\u0441\u044F:` / `\u041E\u0436\u0438\u0434\u0430\u0435\u043C\u043E:` <observable result>."
       });
     }
   }
@@ -685,6 +685,10 @@ function createPlanProtectionForTest(dependencies = {}) {
             reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Wait for user feedback or native Refine."
           };
         }
+        const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
+        if (!check.ok) {
+          return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
+        }
         turn.proposalCount += 1;
         if (turn.proposalCount > MAX_TURN_PROPOSALS) {
           turn.blocked = true;
@@ -692,10 +696,6 @@ function createPlanProtectionForTest(dependencies = {}) {
             block: true,
             reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback or native Refine."
           };
-        }
-        const check = await preflightProposal(event.input.content, sessionId, ctx.localProtocolOptions);
-        if (!check.ok) {
-          return { block: true, reason: `[PLAN_HANDOFF_${check.code}] ${check.reason}` };
         }
         const planContent = await fs.readFile(check.planPath, "utf8");
         let cycle = turn.cyclesBySlug.get(check.slug);

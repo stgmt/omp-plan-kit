@@ -2,6 +2,21 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.3.1] - 2026-09-05
+
+### Fixed
+
+- Natural Russian verification token `Ожидается:` is now accepted by `VERIFICATION_NOT_ACTIONABLE` form 2 (`src/plan-validator.ts`); `Expected:` and the v1.3.0-documented `Ожидаемо:` remain accepted for backward compatibility. Bullet-list (`- `) and numbered (`1)`) continuations before the token stay supported.
+- `SECTION_MISSING` repair hint now states that the heading line must be exactly `## Context` (English literal; translations, bilingual, or decorated headings are not matched). This is what the production session of 2026-09-05 tripped over: bilingual headings were attempted because the old hint read as "add a section about Context".
+- `VERIFICATION_NOT_ACTIONABLE` repair hint now names every accepted token: `Expected:` / `Ожидается:` / `Ожидаемо:`.
+- Turn budget (`MAX_TURN_PROPOSALS`) in `src/extension.ts` now counts only proposals that pass the deterministic preflight. Previously four malformed `xd://propose` payloads (full Markdown, empty, whitespace, path traversal) burned the whole per-turn budget and latched `PLAN_VALIDATOR_TURN_BLOCKED`, so a valid plan in the same turn could no longer be submitted; `tests/e2e-programmer.mjs` was failing on `origin/main` for exactly this reason.
+- `tests/e2e-programmer.mjs` now proves the budget semantics end to end: malformed and missing-artifact rejections stay uncounted, four counted attempts pass, the 5th trips `PLAN_VALIDATOR_TURN_BLOCKED`, and the sticky latch answers further calls in constant time (schema `omp-plan-kit-programmer-e2e@3`).
+
+### Added
+
+- `tests/e2e-validator-mutations.mjs` (registered as `e2e:mutations` and in `e2e:all`/`check`): BDD scenario x mutation matrix. Ten Given/When/Then scenarios run against the real build (baseline) and against eleven source mutants (token alternation, bullet prefix, repair hints, heading exactness, immediate-Expected rule, budget ordering, budget bounds, sticky latch). Every mutant must be killed by at least one scenario; the suite fails otherwise.
+- Validator e2e coverage for Russian tokens and hints: natural `Ожидается:` (plain and bulleted), exact-literal hint assertions, bilingual-heading rejection, token-list hint assertion.
+
 ## [1.3.0] - 2026-09-04
 
 ### Added
