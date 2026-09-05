@@ -343,8 +343,12 @@ const MUTATIONS = [
 // Harness
 // ---------------------------------------------------------------------------
 
+const home = os.homedir();
+const ompRoot = process.env.OMP_CODING_AGENT_ROOT ?? path.join(home, ".omp", "plugins", "node_modules", "@oh-my-pi", "pi-coding-agent");
+const { loadLegacyPiModule } = await import(pathToFileURL(path.join(ompRoot, "src/extensibility/plugins/legacy-pi-compat.ts")).href);
+
 async function loadModule(bundlePath) {
-  return import(pathToFileURL(bundlePath).href);
+  return loadLegacyPiModule(bundlePath);
 }
 
 async function runScenarios(module, kind) {
