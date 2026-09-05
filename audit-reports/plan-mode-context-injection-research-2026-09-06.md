@@ -102,3 +102,13 @@ setTurnSystemPromptOverride(chained prompt)             agent-session.ts:5655
 
 All evidence paths are into the installed runtime source tree `C:\Users\stigm\.omp\plugins\node_modules\@oh-my-pi\pi-coding-agent\src\`:
 `extensibility/extensions/types.ts` (715, 1100-1108, 1210+), `extensibility/extensions/runner.ts` (`emitBeforeAgentStart`, `#runHandlerWithTimeout`), `session/agent-session.ts` (166, 1000, 1017, 4842, 4851, 5141, 5635-5660), `plan-mode/state.ts`, `prompts/system/plan-mode-active.md`, `modes/interactive-mode.ts` (2688), `session/session-manager.ts` (457).
+
+
+## Verification correction (2026-09-06, same day)
+
+The first pass of this research had a real defect the owner called out: the extension-event list had been extracted with a truncated console output, and F1 ("no plan-mode event") was asserted from an incomplete list. Full re-verification was performed:
+
+- Complete `on(event: ...)` enumeration in `extensibility/extensions/types.ts`: **45 events** (full list written to a file and counted, no truncation). Events containing `plan` or `mode`: **none**. F1 confirmed.
+- Complete `ExtensionContext` member enumeration (brace-matched interface body, 22 members): no plan-mode accessor. F3 confirmed.
+- All remaining `planMode` mentions across the whole `src` tree were re-read individually: `modes/interactive-mode.ts` (UI state), `modes/types.ts:169-181` (UI fields), `main.ts:1330-1338` (`--plan` model role override), `sdk.ts:2740` (`settings.get("plan.enabled")` write-tool registration), `cli/extension-flags.ts:25-30` (comment: an extension CLI flag may shadow the built-in `--plan` flag), `config/settings*.ts` (`plan.enabled` setting). None expose plan-mode state to extensions. F2/F3 stand.
+- Cross-checked against the official harness docs (`omp://system-prompt-customization.md`): sanctioned prompt channels for users/operators are `SYSTEM.md` / `APPEND_SYSTEM.md` / `--append-system-prompt` (always-on, operator-configured, not plan-mode-scoped, not plugin-shippable). The only extension-level channel is `before_agent_start` system-prompt replacement (chained), matching F4-F8. Conclusion unchanged; an additional operator-level channel (`APPEND_SYSTEM.md`) is acknowledged as the simplest non-plugin alternative (always-on, no plan-mode scoping).
