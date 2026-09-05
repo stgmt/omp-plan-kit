@@ -13,7 +13,8 @@ export type PlanIssue = {
     | "SECTION_ORDER"
     | "SECTION_EMPTY"
     | "APPROACH_TARGET_MISSING"
-    | "VERIFICATION_NOT_ACTIONABLE";
+    | "VERIFICATION_NOT_ACTIONABLE"
+    | "PLAN_CORE_INVALID";
   section?: PlanSection;
   line?: number;
   message: string;
@@ -232,6 +233,207 @@ function isVerificationActionable(
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Machine-readable plan core (optional JSON front-matter)
+// ---------------------------------------------------------------------------
+// A plan MAY start with a JSON front-matter block:
+//
+//   ---
+//   {
+//     "sections": {
+//       "context": "<any-language string>",
+//       "approach": [{ "action": "<any-language>", "target": "<exact target>" }],
+//       "verification": [{ "command": "<command>", "expects": "<observable result, any language>" }]
+//     }
+//   }
+//   ---
+//
+// When a valid core is present, the validator checks the DATA and skips the
+// Markdown path entirely: heading keys and body language become irrelevant.
+// Keys ("sections", "context", "approach", "action", "target", "command",
+// "expects") are format literals, like YAML keys: they are not translated.
+// Values are free language. Unknown extra keys are ignored (forward compat).
+
+export interface PlanCoreApproachStep {
+  action: string;
+  target: string;
+}
+
+export interface PlanCoreVerificationStep {
+  command: string;
+  expects: string;
+}
+
+export interface PlanCore {
+  context: string;
+  approach: PlanCoreApproachStep[];
+  verification: PlanCoreVerificationStep[];
+}
+
+export interface ParsedPlanCore {
+  core?: PlanCore;
+  /** End line (0-based, exclusive) of the front-matter block, when a block was found. */
+  blockEndLine?: number;
+  issues: PlanIssue[];
+}
+
+const PLAN_CORE_MAX_HEAD_LINES = 100;
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function coreIssue(message: string, fix: string, line?: number): PlanIssue {
+  return {
+    code: "PLAN_CORE_INVALID",
+    line,
+    message: `Plan core (front-matter): ${message}`,
+    fix,
+  };
+}
+
+export function parsePlanCore(lines: readonly string[]): ParsedPlanCore {
+  if ((lines[0] ?? "").trim() !== "---") {
+    return { issues: [] };
+  }
+  let closeLine = -1;
+  const limit = Math.min(lines.length, PLAN_CORE_MAX_HEAD_LINES);
+  for (let i = 1; i < limit; i++) {
+    if ((lines[i] ?? "").trim() === "---") {
+      closeLine = i;
+      break;
+    }
+  }
+  if (closeLine === -1) {
+    // No closing fence: treat the file as a plain Markdown plan (no core).
+    return { issues: [] };
+  }
+
+  const jsonText = lines.slice(1, closeLine).join("\n");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [
+        coreIssue(
+          `front-matter is not valid JSON (${String((error as Error).message).split("\n")[0]})`,
+          "Fix the JSON syntax inside the leading --- ... --- block, or remove the block to validate as a Markdown plan.",
+          1,
+        ),
+      ],
+    };
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [coreIssue("front-matter root must be a JSON object", 'Use {"sections": {...}} as the root object.', 1)],
+    };
+  }
+
+  const root = parsed as Record<string, unknown>;
+  const sectionsValue = root.sections;
+  if (typeof sectionsValue !== "object" || sectionsValue === null || Array.isArray(sectionsValue)) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [
+        coreIssue(
+          '"sections" must be an object with keys "context", "approach", "verification"',
+          'Add "sections": { "context": "<string>", "approach": [...], "verification": [...] }.',
+          1,
+        ),
+      ],
+    };
+  }
+
+  const sections = sectionsValue as Record<string, unknown>;
+  const issues: PlanIssue[] = [];
+
+  if (!isNonEmptyString(sections.context)) {
+    issues.push(
+      coreIssue(
+        '"sections.context" must be a non-empty string',
+        'Set "sections.context" to a short description of the task (any language).',
+        1,
+      ),
+    );
+  }
+
+  const approach = sections.approach;
+  if (!Array.isArray(approach) || approach.length === 0) {
+    issues.push(
+      coreIssue(
+        '"sections.approach" must be a non-empty array of { "action", "target" } objects',
+        'List at least one step: { "action": "<what to do>", "target": "<exact file/symbol/route>" }.',
+        1,
+      ),
+    );
+  } else {
+    approach.forEach((step, index) => {
+      const entry = `sections.approach[${index}]`;
+      if (typeof step !== "object" || step === null || Array.isArray(step)) {
+        issues.push(coreIssue(`${entry} must be an object`, `Use { "action": "...", "target": "..." } for ${entry}.`, 1));
+        return;
+      }
+      const record = step as Record<string, unknown>;
+      if (!isNonEmptyString(record.action)) {
+        issues.push(coreIssue(`${entry}.action must be a non-empty string`, `Set ${entry}.action (any language).`, 1));
+      }
+      if (!isNonEmptyString(record.target)) {
+        issues.push(coreIssue(`${entry}.target must be a non-empty exact target`, `Set ${entry}.target to an exact file, symbol, route, or UI path.`, 1));
+      }
+    });
+  }
+
+  const verification = sections.verification;
+  if (!Array.isArray(verification) || verification.length === 0) {
+    issues.push(
+      coreIssue(
+        '"sections.verification" must be a non-empty array of { "command", "expects" } objects',
+        'List at least one proof: { "command": "<command>", "expects": "<observable result, any language>" }.',
+        1,
+      ),
+    );
+  } else {
+    verification.forEach((step, index) => {
+      const entry = `sections.verification[${index}]`;
+      if (typeof step !== "object" || step === null || Array.isArray(step)) {
+        issues.push(coreIssue(`${entry} must be an object`, `Use { "command": "...", "expects": "..." } for ${entry}.`, 1));
+        return;
+      }
+      const record = step as Record<string, unknown>;
+      if (!isNonEmptyString(record.command)) {
+        issues.push(coreIssue(`${entry}.command must be a non-empty string`, `Set ${entry}.command to the exact verification command.`, 1));
+      }
+      if (!isNonEmptyString(record.expects)) {
+        issues.push(coreIssue(`${entry}.expects must be a non-empty observable result`, `Set ${entry}.expects (any language).`, 1));
+      }
+    });
+  }
+
+  if (issues.length > 0) {
+    return { blockEndLine: closeLine + 1, issues };
+  }
+
+  return {
+    blockEndLine: closeLine + 1,
+    issues: [],
+    core: {
+      context: (sections.context as string).trim(),
+      approach: (approach as PlanCoreApproachStep[]).map((step) => ({
+        action: (step as PlanCoreApproachStep).action.trim(),
+        target: (step as PlanCoreApproachStep).target.trim(),
+      })),
+      verification: (verification as PlanCoreVerificationStep[]).map((step) => ({
+        command: (step as PlanCoreVerificationStep).command.trim(),
+        expects: (step as PlanCoreVerificationStep).expects.trim(),
+      })),
+    },
+  };
+}
+
 export function validatePlanStructure(markdown: string): PlanIssue[] {
   if (!markdown || markdown.trim().length === 0) {
     return [
@@ -243,6 +445,15 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
       },
     ];
   }
+
+  // Machine-readable plan core (optional JSON front-matter) takes precedence:
+  // when a core block is present, the DATA is validated and the Markdown path
+  // (heading keys, section order, prose proofs) is skipped entirely.
+  const parsedCore = parsePlanCore(markdown.split(/\r?\n/));
+  if (parsedCore.blockEndLine !== undefined) {
+    return parsedCore.issues;
+  }
+
 
   const lines = markdown.split(/\r?\n/);
   const issues: PlanIssue[] = [];

@@ -2,6 +2,23 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.5.0] - 2026-09-05
+
+### Added
+
+- Machine-readable plan core: a plan MAY start with an optional JSON front-matter block (`--- { ... } ---`) carrying `sections.context` (string), `sections.approach` (array of `{ action, target }`), and `sections.verification` (array of `{ command, expects }`) — `src/plan-validator.ts` exports `parsePlanCore` and `PlanCore` types.
+- When a valid core is present the validator checks the DATA and skips the Markdown path entirely: section-heading keys and body language become irrelevant. A plan whose body and headings are entirely in Russian (or any language) now passes with zero issues — the last language-coupled surface of the gate is gone for plans that opt in.
+- Core violations return `PLAN_CORE_INVALID` with the exact field named (`sections.approach[0].target`, `sections.verification[0].expects`, ...), rendered in the repair packet.
+
+### Changed
+
+- Core block rules: must start at line 1 and close within the first 100 lines; a leading `---` without a closing fence falls back to the Markdown path; invalid JSON inside the block fails closed with `PLAN_CORE_INVALID` (never silently parsed as Markdown); unknown extra keys are ignored for forward compatibility.
+
+### Compatibility
+
+- Strictly opt-in and widening: plans without front-matter are validated exactly as in v1.4.0. Plan keys (`sections`, `context`, `approach`, `action`, `target`, `command`, `expects`) are format literals like YAML keys and are not translated; values are free language.
+- Basis: competitor research (`audit-reports/research-competitor-plan-validation-2026-09-05.md`) — validation-by-construction (Spec Kit, Copilot Workspace) closes the parsing problem at the root; Gherkin-style keyword registries and LLM extraction were evaluated and rejected.
+
 ## [1.4.0] - 2026-09-05
 
 ### Changed

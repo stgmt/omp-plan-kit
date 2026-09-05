@@ -226,9 +226,33 @@ tests/e2e-advisor-live.mjs             live native model review verification
 audit-reports/                         evidence, architecture decisions, and release notes
 ```
 
+## Plan format contract
+
+A plan submitted through `xd://propose` is validated in one of two ways.
+
+**1. Machine-readable core (recommended, opt-in).** If the plan starts with a JSON front-matter block, the validator checks the data and skips Markdown parsing entirely — headings and body language become irrelevant:
+
+```markdown
+---
+{
+  "sections": {
+    "context": "<task description, any language>",
+    "approach": [{ "action": "<what to do>", "target": "<exact file/symbol/route>" }],
+    "verification": [{ "command": "<command>", "expects": "<observable result, any language>" }]
+  }
+}
+---
+(any plan body in any language)
+```
+
+- Keys (`sections`, `context`, `approach`, `action`, `target`, `command`, `expects`) are format literals, like YAML keys: they are not translated. Values are free language.
+- The block must start at line 1 and close within the first 100 lines. Invalid JSON inside it fails closed (`PLAN_CORE_INVALID`), never silently parsed as Markdown. Unknown extra keys are ignored.
+
+**2. Markdown plan.** Without front-matter, the canonical section contract applies: heading lines `## Context`, `## Approach`, `## Verification` (exact English literals — section keys are format identifiers, like Kiro's EARS keywords or Spec Kit templates; they are not translated), approach steps with exact targets, and actionable verification proofs: inline `` `command` → result `` or a fenced command block followed immediately by a result line in any language (marker words like `Expected:` are accepted but not required).
+
 ## Release
 
-Current release: [`v1.4.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.4.0).
+Current release: [`v1.5.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.5.0).
 
 Release review report: `audit-reports/omp-plan-kit-v1.3.0-review-2026-09-04.md`.
 

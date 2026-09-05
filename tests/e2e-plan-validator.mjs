@@ -806,3 +806,95 @@ try {
 } finally {
   await fs.rm(localRoot, { recursive: true, force: true });
 }
+
+
+// 16. BDD: machine-readable JSON plan core — fully Russian plan passes without any English heading
+{
+  const core = {
+    sections: {
+      context: "Проверка позиционного правила на русском.",
+      approach: [
+        { action: "Добавить позиционную проверку", target: "src/plan-validator.ts" },
+        { action: "Обновить тесты", target: "tests/e2e-plan-validator.mjs" },
+      ],
+      verification: [
+        { command: "bun tests/e2e-plan-validator.mjs", expects: "decision pass, 0 survivors" },
+      ],
+    },
+  };
+  const body = "# Полностью русский план\n\nЗдесь нет ни одного английского заголовка.\n## Совсем другой раздел\n\nТекст.\n";
+  const planWithCore = "---\n" + JSON.stringify(core, null, 2) + "\n---\n" + body;
+  const issues = validatePlanStructure(planWithCore);
+  assert.deepEqual(issues, [], "valid plan core must pass regardless of heading language");
+  const extraKeys = JSON.parse(JSON.stringify(core));
+  extraKeys.sections.owner = "любой текст";
+  extraKeys.futureField = { nested: true };
+  const planExtra = "---\n" + JSON.stringify(extraKeys, null, 2) + "\n---\n" + body;
+  assert.deepEqual(
+    validatePlanStructure(planExtra), [],
+    "unknown extra core keys must be ignored (forward compatibility)"
+  );
+}
+
+// 17. BDD: plan core field violations return exactly one PLAN_CORE_INVALID with the field named
+{
+  const core = {
+    sections: {
+      context: "Проверка.",
+      approach: [{ action: "a", target: "src/x.ts" }],
+      verification: [{ command: "bun test", expects: "green" }],
+    },
+  };
+  const body = "## Context\nok\n";
+  const variant = (mutate) => "---\n" + JSON.stringify(mutate(structuredClone(core)), null, 2) + "\n---\n" + body;
+
+  const emptyContext = variant((c) => { c.sections.context = ""; return c; });
+  let issues = validatePlanStructure(emptyContext);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+  assert.match(issues[0].message, /sections\.context/);
+
+  const missingTarget = variant((c) => { delete c.sections.approach[0].target; return c; });
+  issues = validatePlanStructure(missingTarget);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /sections\.approach\[0\]\.target/);
+
+  const emptyExpects = variant((c) => { c.sections.verification[0].expects = "  "; return c; });
+  issues = validatePlanStructure(emptyExpects);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /sections\.verification\[0\]\.expects/);
+
+  const emptyApproach = variant((c) => { c.sections.approach = []; return c; });
+  issues = validatePlanStructure(emptyApproach);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /sections\.approach/);
+
+  const broken = "---\n{ broken json\n---\n" + body;
+  issues = validatePlanStructure(broken);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+  assert.match(issues[0].message, /not valid JSON/);
+
+  const noSections = "---\n" + JSON.stringify({ notes: "x" }, null, 2) + "\n---\n" + body;
+  issues = validatePlanStructure(noSections);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /"sections" must be an object/);
+
+  const packet = formatRepairPacket("core-check", issues, 1, 3);
+  assert.match(packet, /PLAN_CORE_INVALID/, "repair packet must render core issues");
+}
+
+// 18. BDD: leading --- without a closing fence is a Markdown plan, not a broken core
+{
+  const planWithHr = [
+    "---",
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. Change `src/feature.ts`.",
+    "## Verification",
+    "- `bun test` → exit code 0",
+  ].join("\n");
+  const issues = validatePlanStructure(planWithHr);
+  assert.deepEqual(issues, [], "unclosed leading --- must fall back to the Markdown path");
+}

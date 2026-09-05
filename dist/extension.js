@@ -170,6 +170,125 @@ function isVerificationActionable(lines, primaryLine, endIndex, lineFenceState) 
   }
   return false;
 }
+var PLAN_CORE_MAX_HEAD_LINES = 100;
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function coreIssue(message, fix, line) {
+  return {
+    code: "PLAN_CORE_INVALID",
+    line,
+    message: `Plan core (front-matter): ${message}`,
+    fix
+  };
+}
+function parsePlanCore(lines) {
+  if ((lines[0] ?? "").trim() !== "---") {
+    return { issues: [] };
+  }
+  let closeLine = -1;
+  const limit = Math.min(lines.length, PLAN_CORE_MAX_HEAD_LINES);
+  for (let i = 1;i < limit; i++) {
+    if ((lines[i] ?? "").trim() === "---") {
+      closeLine = i;
+      break;
+    }
+  }
+  if (closeLine === -1) {
+    return { issues: [] };
+  }
+  const jsonText = lines.slice(1, closeLine).join(`
+`);
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (error) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [
+        coreIssue(`front-matter is not valid JSON (${String(error.message).split(`
+`)[0]})`, "Fix the JSON syntax inside the leading --- ... --- block, or remove the block to validate as a Markdown plan.", 1)
+      ]
+    };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [coreIssue("front-matter root must be a JSON object", 'Use {"sections": {...}} as the root object.', 1)]
+    };
+  }
+  const root = parsed;
+  const sectionsValue = root.sections;
+  if (typeof sectionsValue !== "object" || sectionsValue === null || Array.isArray(sectionsValue)) {
+    return {
+      blockEndLine: closeLine + 1,
+      issues: [
+        coreIssue('"sections" must be an object with keys "context", "approach", "verification"', 'Add "sections": { "context": "<string>", "approach": [...], "verification": [...] }.', 1)
+      ]
+    };
+  }
+  const sections = sectionsValue;
+  const issues = [];
+  if (!isNonEmptyString(sections.context)) {
+    issues.push(coreIssue('"sections.context" must be a non-empty string', 'Set "sections.context" to a short description of the task (any language).', 1));
+  }
+  const approach = sections.approach;
+  if (!Array.isArray(approach) || approach.length === 0) {
+    issues.push(coreIssue('"sections.approach" must be a non-empty array of { "action", "target" } objects', 'List at least one step: { "action": "<what to do>", "target": "<exact file/symbol/route>" }.', 1));
+  } else {
+    approach.forEach((step, index) => {
+      const entry = `sections.approach[${index}]`;
+      if (typeof step !== "object" || step === null || Array.isArray(step)) {
+        issues.push(coreIssue(`${entry} must be an object`, `Use { "action": "...", "target": "..." } for ${entry}.`, 1));
+        return;
+      }
+      const record = step;
+      if (!isNonEmptyString(record.action)) {
+        issues.push(coreIssue(`${entry}.action must be a non-empty string`, `Set ${entry}.action (any language).`, 1));
+      }
+      if (!isNonEmptyString(record.target)) {
+        issues.push(coreIssue(`${entry}.target must be a non-empty exact target`, `Set ${entry}.target to an exact file, symbol, route, or UI path.`, 1));
+      }
+    });
+  }
+  const verification = sections.verification;
+  if (!Array.isArray(verification) || verification.length === 0) {
+    issues.push(coreIssue('"sections.verification" must be a non-empty array of { "command", "expects" } objects', 'List at least one proof: { "command": "<command>", "expects": "<observable result, any language>" }.', 1));
+  } else {
+    verification.forEach((step, index) => {
+      const entry = `sections.verification[${index}]`;
+      if (typeof step !== "object" || step === null || Array.isArray(step)) {
+        issues.push(coreIssue(`${entry} must be an object`, `Use { "command": "...", "expects": "..." } for ${entry}.`, 1));
+        return;
+      }
+      const record = step;
+      if (!isNonEmptyString(record.command)) {
+        issues.push(coreIssue(`${entry}.command must be a non-empty string`, `Set ${entry}.command to the exact verification command.`, 1));
+      }
+      if (!isNonEmptyString(record.expects)) {
+        issues.push(coreIssue(`${entry}.expects must be a non-empty observable result`, `Set ${entry}.expects (any language).`, 1));
+      }
+    });
+  }
+  if (issues.length > 0) {
+    return { blockEndLine: closeLine + 1, issues };
+  }
+  return {
+    blockEndLine: closeLine + 1,
+    issues: [],
+    core: {
+      context: sections.context.trim(),
+      approach: approach.map((step) => ({
+        action: step.action.trim(),
+        target: step.target.trim()
+      })),
+      verification: verification.map((step) => ({
+        command: step.command.trim(),
+        expects: step.expects.trim()
+      }))
+    }
+  };
+}
 function validatePlanStructure(markdown) {
   if (!markdown || markdown.trim().length === 0) {
     return [
@@ -180,6 +299,10 @@ function validatePlanStructure(markdown) {
         fix: "Write a complete plan with Context, Approach, and Verification sections."
       }
     ];
+  }
+  const parsedCore = parsePlanCore(markdown.split(/\r?\n/));
+  if (parsedCore.blockEndLine !== undefined) {
+    return parsedCore.issues;
   }
   const lines = markdown.split(/\r?\n/);
   const issues = [];

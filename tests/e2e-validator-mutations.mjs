@@ -284,6 +284,81 @@ const SCENARIOS = [
     },
   },
   {
+    id: "V-core-russian-body",
+    given: "a valid JSON plan core followed by a body with only Russian headings",
+    when: "validatePlanStructure runs",
+    then: "no issues are returned — the data path is language-free",
+    kind: "validator",
+    input: [
+      "---",
+      JSON.stringify({
+        sections: {
+          context: "Проверка позиционного правила на русском.",
+          approach: [{ action: "Добавить проверку", target: "src/plan-validator.ts" }],
+          verification: [{ command: "bun test", expects: "всё зелёное" }],
+        },
+      }, null, 2),
+      "---",
+      "# Полностью русский план",
+      "## Совсем другой раздел",
+      "Текст.",
+    ].join("\n"),
+    assert(issues) {
+      assert.deepEqual(issues, [], "valid core must pass regardless of heading language");
+    },
+  },
+  {
+    id: "V-core-empty-context",
+    given: "a plan core with an empty context string",
+    when: "validatePlanStructure runs",
+    then: "exactly one PLAN_CORE_INVALID names sections.context",
+    kind: "validator",
+    input: [
+      "---",
+      '{"sections": {"context": "", "approach": [{"action": "a", "target": "src/x.ts"}], "verification": [{"command": "bun test", "expects": "ok"}]}}',
+      "---",
+      "## Context",
+      "ok",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+      assert.match(issues[0].message, /sections\.context/);
+    },
+  },
+  {
+    id: "V-core-empty-expects",
+    given: "a plan core whose verification step has a blank expects value",
+    when: "validatePlanStructure runs",
+    then: "exactly one PLAN_CORE_INVALID names sections.verification[0].expects",
+    kind: "validator",
+    input: [
+      "---",
+      '{"sections": {"context": "ok", "approach": [{"action": "a", "target": "src/x.ts"}], "verification": [{"command": "bun test", "expects": "  "}]}}',
+      "---",
+      "## Context",
+      "ok",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+      assert.match(issues[0].message, /sections\.verification\[0\]\.expects/);
+    },
+  },
+  {
+    id: "V-core-broken-json",
+    given: "a leading front-matter block containing broken JSON",
+    when: "validatePlanStructure runs",
+    then: "exactly one PLAN_CORE_INVALID reports the syntax error",
+    kind: "validator",
+    input: ["---", "{ broken json", "---", "## Context", "ok"].join("\n"),
+    assert(issues) {
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+      assert.match(issues[0].message, /not valid JSON/);
+    },
+  },
+  {
     id: "B-budget-counts-preflight-passed-only",
     given: "six malformed proposals rejected uncounted and four counted handoff attempts used",
     when: "further proposals arrive on the same turn",
@@ -398,6 +473,27 @@ const MUTATIONS = [
     why: "an empty fenced block carries no command and must not qualify",
     from: "      if (closeIdx !== -1 && hasBlockContent) {",
     to: "      if (closeIdx !== -1) {",
+  },
+  {
+    id: "M-drop-core-path",
+    file: VALIDATOR,
+    why: "the data path must take precedence: a valid core passes without English headings",
+    from: "  const parsedCore = parsePlanCore(markdown.split(/\\r?\\n/));",
+    to: "  const parsedCore = { issues: [] };",
+  },
+  {
+    id: "M-core-lenient-context",
+    file: VALIDATOR,
+    why: "an empty context string must be rejected in the core",
+    from: "  if (!isNonEmptyString(sections.context)) {",
+    to: "  if (false) {",
+  },
+  {
+    id: "M-core-skip-expects",
+    file: VALIDATOR,
+    why: "a verification step without an observable result must be rejected in the core",
+    from: "      if (!isNonEmptyString(record.expects)) {",
+    to: "      if (false) {",
   },
   {
     id: "M-budget-counts-malformed",
