@@ -642,26 +642,16 @@ assert.equal(typeof createPlanProtectionForTest, "function", "createPlanProtecti
 
 const sessionId = `validator-e2e-${process.pid}-${Date.now()}`;
 const localRoot = path.join(os.tmpdir(), "omp-local", sessionId);
-const requests = [];
-
-const completeFake = async (model, request, options) => {
-  requests.push({ model, request, options });
-  return { content: [{ type: "text", text: "APPROVE: План валиден." }], usage: { input_tokens: 50, output_tokens: 10 } };
-};
-
-const policy = createPlanProtectionForTest({ complete: completeFake });
+const policy = createPlanProtectionForTest();
 const context = {
   sessionManager: { getSessionId: () => sessionId },
   hasUI: false,
   ui: { notify() {} },
-  models: { resolve() { return { provider: "test", id: "test-advisor" }; }, current() { return undefined; } },
-  modelRegistry: { async getApiKey() { return "test-key"; } },
 };
 
 try {
   await fs.mkdir(localRoot, { recursive: true });
 
-  // Integration Test A: Proposing empty file -> blocked by validator, 0 advisor calls
   await fs.writeFile(path.join(localRoot, "empty-plan.md"), "   \n\n  ", "utf8");
   const emptyBlock = await policy.handleToolCall({
     toolName: "write",
@@ -672,9 +662,7 @@ try {
   assert.equal(emptyBlock?.block, true);
   assert.match(emptyBlock.reason, /PLAN_VALIDATOR_BLOCK/);
   assert.match(emptyBlock.reason, /PLAN_EMPTY/);
-  assert.equal(requests.length, 0, "Validator failure must never call advisor");
 
-  // Integration Test B: Proposing plan missing all 3 sections -> all 3 returned in one packet, 0 advisor calls
   await fs.writeFile(path.join(localRoot, "missing-plan.md"), "# Bad Plan\nNo sections here\n", "utf8");
   const missingBlock = await policy.handleToolCall({
     toolName: "write",
@@ -687,7 +675,6 @@ try {
   assert.match(missingBlock.reason, /SECTION_MISSING.*Context/);
   assert.match(missingBlock.reason, /SECTION_MISSING.*Approach/);
   assert.match(missingBlock.reason, /SECTION_MISSING.*Verification/);
-  assert.equal(requests.length, 0, "Multiple validator failures must never call advisor");
 
   // Integration Test C: Proposing plan with code fence header -> blocked because heading was inside fence
   const fenceContent = [
@@ -708,9 +695,7 @@ try {
 
   assert.equal(fencedBlock?.block, true);
   assert.match(fencedBlock.reason, /SECTION_MISSING.*Approach/);
-  assert.equal(requests.length, 0, "Fenced heading failure must never call advisor");
 
-  // Integration Test D: Proposing non-actionable plan -> blocked by validator with 0 advisor calls
   const nonActionableContent = [
     "# Non-Actionable",
     "## Context",
@@ -731,12 +716,10 @@ try {
   assert.match(nonActionableBlock.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
   assert.match(nonActionableBlock.reason, /APPROACH_TARGET_MISSING/);
   assert.match(nonActionableBlock.reason, /VERIFICATION_NOT_ACTIONABLE/);
-  assert.equal(requests.length, 0, "Non-actionable plan must block with 0 advisor calls");
 
   // Reset turn budget for next integration test
   await policy.handleAgentStart({ prompt: "Next turn for valid plan" }, context);
 
-  // Integration Test E: Proposing valid minimal plan -> passes validator and reaches advisor
   const validContent = [
     "## Context",
     "Valid context description.",
@@ -751,14 +734,12 @@ try {
     toolCallId: "call-valid",
     input: { path: "xd://propose", content: "valid" },
   }, context);
+  assert.equal(validPass, undefined, "Valid plan must pass the deterministic guard");
 
-  assert.equal(validPass, undefined, "Valid plan proposal must pass validator and advisor");
-  assert.equal(requests.length, 1, "Advisor must be called exactly once for valid plan");
 
   // Reset turn budget for next integration test
   await policy.handleAgentStart({ prompt: "Next turn for UI plan" }, context);
 
-  // Integration Test F: Proposing valid UI plan without CLI -> passes validator and reaches advisor
   const uiContent = [
     "## Context",
     "Valid UI context description.",
@@ -773,13 +754,10 @@ try {
     toolCallId: "call-ui",
     input: { path: "xd://propose", content: "ui" },
   }, context);
+  assert.equal(uiPass, undefined, "Valid UI plan must pass the deterministic guard");
 
-  assert.equal(uiPass, undefined, "Valid UI plan proposal must pass validator and reach advisor");
-  assert.equal(requests.length, 2, "Advisor must be called for valid UI plan");
 
-  // Integration Test G: an activated plan-mode policy requires the JSON core before advisor review
   const strictPolicy = createPlanProtectionForTest({
-    complete: completeFake,
     requiresPlanCore: (candidateSessionId) => candidateSessionId === sessionId,
   });
   await fs.writeFile(path.join(localRoot, "strict-plan.md"), validContent, "utf8");
@@ -790,7 +768,6 @@ try {
   }, context);
   assert.equal(strictBlock?.block, true);
   assert.match(strictBlock.reason, /PLAN_CORE_REQUIRED/);
-  assert.equal(requests.length, 2, "Required-core failure must block before the advisor");
 
   process.stdout.write(`${JSON.stringify({
     schema: "omp-plan-validator-e2e@2",
@@ -812,12 +789,11 @@ try {
       cyrillicExpectedPasses: true,
       issueSignatureStableAcrossCosmetics: true,
       formatRepairPacketContractCompliant: true,
-      zeroAdvisorCallsOnValidatorFailures: true,
-      validPlanReachesAdvisor: true,
-      requiredCoreBlocksBeforeAdvisor: true,
+      deterministicFailuresBlockBeforeNativeReview: true,
+      validPlanPassesDeterministicGuard: true,
+      requiredCoreBlocksBeforeNativeReview: true,
     },
     totalValidatorTests: 23,
-    advisorCalls: requests.length,
   }, null, 2)}\n`);
 } finally {
   await fs.rm(localRoot, { recursive: true, force: true });

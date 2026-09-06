@@ -631,7 +631,6 @@ async function buildInto(dir) {
 }
 
 async function main() {
-  process.env.OMP_PLAN_ADVISOR = "0";
   const mutants = [];
   try {
     // Baseline: real sources must satisfy every scenario.

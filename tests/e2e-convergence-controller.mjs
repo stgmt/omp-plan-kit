@@ -16,12 +16,6 @@ assert.equal(typeof createPlanProtectionForTest, "function");
 const sessionId = `convergence-e2e-${process.pid}-${Date.now()}`;
 const localRoot = path.join(os.tmpdir(), "omp-local", sessionId);
 
-let advisorCalls = 0;
-const completeFake = async () => {
-  advisorCalls += 1;
-  return { content: [{ type: "text", text: "APPROVE: OK" }] };
-};
-
 let abortCalls = 0;
 let notifyCalls = 0;
 const context = {
@@ -35,8 +29,6 @@ const context = {
   abort() {
     abortCalls += 1;
   },
-  models: { resolve() { return { provider: "test", id: "test-advisor" }; }, current() { return undefined; } },
-  modelRegistry: { async getApiKey() { return "test-key"; } },
 };
 
 try {
@@ -46,7 +38,7 @@ try {
   // Test 1: Error reduction allows next attempt (progress detected)
   // -----------------------------------------------------------------------
   {
-    const policy = createPlanProtectionForTest({ complete: completeFake });
+    const policy = createPlanProtectionForTest();
     await policy.handleAgentStart({ prompt: "User task 1" }, context);
 
     // Attempt 1: missing Context, Approach, Verification (3 errors)
@@ -58,7 +50,6 @@ try {
     }, context);
     assert.equal(res1?.block, true);
     assert.match(res1.reason, /Attempt 1 of 3/);
-    assert.equal(advisorCalls, 0);
 
     // Attempt 2: adds Context and Approach, but Verification still missing (1 error < 3 errors)
     const prog2 = "## Context\nContext text\n## Approach\n1. Target in `src/index.ts`\n";
@@ -71,9 +62,7 @@ try {
     assert.equal(res2?.block, true);
     assert.match(res2.reason, /Attempt 2 of 3/);
     assert.match(res2.reason, /\[SECTION_MISSING\] Verification/);
-    assert.equal(advisorCalls, 0);
 
-    // Attempt 3: adds Verification -> valid, passes to advisor!
     const prog3 = prog2 + "## Verification\n`bun test` → exit code 0\n";
     await fs.writeFile(path.join(localRoot, "prog-plan.md"), prog3, "utf8");
     const res3 = await policy.handleToolCall({
@@ -81,15 +70,14 @@ try {
       toolCallId: "c3",
       input: { path: "xd://propose", content: "prog" },
     }, context);
-    assert.equal(res3, undefined, "Passing validator allows proposal to reach advisor");
-    assert.equal(advisorCalls, 1, "Advisor called exactly once on valid proposal");
+    assert.equal(res3, undefined, "Progressive repair resolution must allow proposal to pass deterministic handoff");
   }
 
   // -----------------------------------------------------------------------
   // Test 2: Hash churn without reduction is stopped after 2 no-progress attempts
   // -----------------------------------------------------------------------
   {
-    const policy = createPlanProtectionForTest({ complete: completeFake });
+    const policy = createPlanProtectionForTest();
     await policy.handleAgentStart({ prompt: "User task 2" }, context);
 
     // Attempt 1: missing Approach and Verification (2 errors)
@@ -139,7 +127,6 @@ try {
   {
     let validatorExecutionCount = 0;
     const policy = createPlanProtectionForTest({
-      complete: completeFake,
       validatePlan: (content) => {
         validatorExecutionCount += 1;
         return [{ code: "SECTION_MISSING", section: "Approach", message: "Approach missing", fix: "Add Approach" }];
@@ -195,7 +182,7 @@ try {
   // Test 4: 5th proposal with slug hopping in same turn gives PLAN_VALIDATOR_TURN_BLOCKED
   // -----------------------------------------------------------------------
   {
-    const policy = createPlanProtectionForTest({ complete: completeFake });
+    const policy = createPlanProtectionForTest();
     await policy.handleAgentStart({ prompt: "User task 4" }, context);
 
     for (let i = 1; i <= 4; i++) {
@@ -259,7 +246,6 @@ try {
   // -----------------------------------------------------------------------
   {
     const policy = createPlanProtectionForTest({
-      complete: completeFake,
       validatePlan: () => {
         throw new Error("Simulated deterministic validator crash");
       },
@@ -296,7 +282,7 @@ try {
       agentStartResetsTurnBlockAndCycles: true,
       validatorExceptionBlocksFailClosed: true,
       ctxAbortRemainsZeroCalls: true,
-      advisorZeroCallsOnDeterministicBlocks: true,
+      deterministicBlocksStayModelFree: true,
     },
     totalTests: 7,
     abortCalls,

@@ -291,8 +291,6 @@ await fs.writeFile(externalPluginPath, `export default function mutationConsumer
 `, "utf8");
 
 const mutantResults = [];
-const previousAdvisorSetting = process.env.OMP_PLAN_ADVISOR;
-process.env.OMP_PLAN_ADVISOR = "0";
 try {
   const baselineBundle = await buildVariant("baseline", null);
   const baseline = await runContract(baselineBundle, externalPluginPath, "baseline");
@@ -319,8 +317,6 @@ try {
     mutants: mutantResults,
   }, null, 2));
 } finally {
-  if (previousAdvisorSetting === undefined) delete process.env.OMP_PLAN_ADVISOR;
-  else process.env.OMP_PLAN_ADVISOR = previousAdvisorSetting;
   delete globalThis[probeKey];
   delete globalThis[consumerKey];
   await fs.rm(tempRoot, { recursive: true, force: true });

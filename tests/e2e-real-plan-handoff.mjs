@@ -4,11 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-process.env.OMP_PLAN_ADVISOR = "1";
-process.env.OMP_PLAN_ADVISOR_MAX_CALLS = "5";
-process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS = "0";
-process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS = "5000";
-process.env.OMP_PLAN_ADVISOR_MAX_TOKENS = "160";
 
 const home = os.homedir();
 const installedExtension = process.env.OMP_PLAN_KIT_EXTENSION_PATH
@@ -19,31 +14,6 @@ const { loadExtensions } = await import(pathToFileURL(path.join(ompRoot, "src/ex
 const { dispatchResolutionDevice } = await import(pathToFileURL(path.join(ompRoot, "src/tools/resolve.ts")).href);
 const { resolveApprovedPlan } = await import(pathToFileURL(path.join(ompRoot, "src/plan-mode/approved-plan.ts")).href);
 const extensionModule = await import(pathToFileURL(installedExtension).href);
-
-// Record every advisor model invocation
-const advisorCalls = [];
-const mockComplete = async (model, request, options) => {
-  advisorCalls.push({ model, request, options });
-  const promptText = request.messages[0].content[0].text;
-
-  // The advisor rejects plans attempting to touch upstream core OMP components
-  if (promptText.toLowerCase().includes("upstream omp")) {
-    return {
-      content: [{ type: "text", text: "REJECT: План затрагивает запрещённый upstream OMP компонент." }],
-      usage: { input_tokens: 85, output_tokens: 18 },
-    };
-  }
-
-  // Otherwise, the advisor approves
-  return {
-    content: [{ type: "text", text: "APPROVE: План проверен, задачи корректны." }],
-    usage: { input_tokens: 80, output_tokens: 12 },
-  };
-};
-
-if (typeof extensionModule.setTestDependencies === "function") {
-  extensionModule.setTestDependencies({ complete: mockComplete });
-}
 
 const loaded = await loadExtensions([installedExtension], process.cwd());
 assert.deepEqual(loaded.errors, [], `OMP loader must import plugin cleanly: ${JSON.stringify(loaded.errors)}`);
@@ -69,19 +39,6 @@ const context = {
   ui: {
     notify(message, type) {
       notifications.push({ message, type });
-    },
-  },
-  models: {
-    resolve() {
-      return { provider: "test", id: "test-advisor" };
-    },
-    current() {
-      return undefined;
-    },
-  },
-  modelRegistry: {
-    async getApiKey() {
-      return "test-api-key";
     },
   },
   localProtocolOptions: {
@@ -156,17 +113,14 @@ try {
   }, context);
 
   // Phase 2: Agent does intermediate planning actions (task updates)
-  // MUST NOT trigger the advisor! ZERO tokens spent during planning!
   await toolHandler({
     toolName: "todo",
     toolCallId: "plan-draft-todo-1",
     input: { op: "init", items: ["Research code", "Draft solution", "Modify upstream OMP"] },
   }, context);
 
-  assert.equal(advisorCalls.length, 0, "Advisor must NEVER run during intermediate planning turns");
   assert.equal(notifications.length, 0, "No notifications during intermediate planning");
 
-  // Phase 2b: Structurally invalid plan is blocked by validator before advisor or core dispatch
   await fs.writeFile(
     path.join(localRoot, "invalid-structure-plan.md"),
     "# Invalid Plan\nMissing Context, Approach, Verification\n",
@@ -183,12 +137,10 @@ try {
 
   assert.equal(structBlockResult?.block, true);
   assert.match(structBlockResult.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
-  assert.equal(advisorCalls.length, 0, "Structurally invalid plan must NEVER invoke advisor");
   assert.equal(dispatchedToCore, false, "Structurally invalid plan must never reach core dispatch");
   assert.equal(coreSelectedPlan, null, "Human review dialog must not open for invalid plan");
 
   // Phase 2c: Non-actionable plan (Approach without exact target, Verification without actionable proof)
-  // is blocked by validator with ZERO advisor calls and no core dispatch
   const nonActionableContent = [
     "# Non-Actionable Plan",
     "## Context",
@@ -212,40 +164,32 @@ try {
   assert.match(nonActionableResult.reason, /\[PLAN_VALIDATOR_BLOCK\]/);
   assert.match(nonActionableResult.reason, /APPROACH_TARGET_MISSING/);
   assert.match(nonActionableResult.reason, /VERIFICATION_NOT_ACTIONABLE/);
-  assert.equal(advisorCalls.length, 0, "Non-actionable plan must NEVER invoke advisor");
   assert.equal(dispatchedToCore, false, "Non-actionable plan must never reach core dispatch");
   assert.equal(coreSelectedPlan, null, "Human review dialog must not open for non-actionable plan");
 
-  // Phase 3: Agent drafts a DEFECTIVE plan (structurally valid and actionable, but violates safety rules)
-  const badFeatureContent = [
-    "# Bad Feature Plan",
+  // Phase 3: Structurally valid plan reaches native OMP review.
+  const validatedFeatureContent = [
+    "# Validated Feature Plan",
     "## Context",
-    "Modifying upstream OMP components.",
+    "Changes remain inside the plugin boundary.",
     "## Approach",
-    "1. Patch upstream OMP in `src/extensibility/extensions/runner.ts` to bypass guards.",
+    "1. Update `src/extension.ts#createPlanProtectionForTest`.",
     "## Verification",
-    "- `bun test` → exit code 0",
+    "- `bun tests/e2e-real-plan-handoff.mjs` → native OMP review receives the validated proposal",
   ].join("\n");
-  await fs.writeFile(path.join(localRoot, "bad-feature-plan.md"), badFeatureContent, "utf8");
-
-  // Agent attempts to exit plan mode via write xd://propose bad-feature
+  await fs.writeFile(path.join(localRoot, "validated-feature-plan.md"), validatedFeatureContent, "utf8");
   dispatchedToCore = false;
   coreSelectedPlan = null;
-
-  const blockedResult = await toolHandler({
+  const validatedResult = await toolHandler({
     toolName: "write",
-    toolCallId: "propose-bad-call",
-    input: { path: "xd://propose", content: "bad-feature" },
+    toolCallId: "propose-validated-call",
+    input: { path: "xd://propose", content: "validated-feature" },
   }, context);
-
-  // Assert advisor ACTUALLY RAN on this proposal!
-  assert.equal(advisorCalls.length, 1, "Advisor MUST execute exactly once when structurally valid and actionable plan is proposed");
-  assert.equal(blockedResult?.block, true, "Defective proposal MUST be blocked by advisor");
-  assert.match(blockedResult.reason, /\[PLAN_ADVISOR_BLOCK\]/, "Must contain [PLAN_ADVISOR_BLOCK]");
-  assert.match(blockedResult.reason, /OMP/iu, "Must cite advisor rejection reason");
-  assert.equal(dispatchedToCore, false, "Core dispatch must NEVER be reached when advisor blocks");
-  assert.equal(coreSelectedPlan, null, "Human review dialog must NOT open for rejected plan");
-
+  assert.equal(validatedResult, undefined, "structurally valid plan must pass deterministic validation");
+  const validatedCoreResult = await dispatchResolutionDevice(ompSession, "propose", "validated-feature");
+  assert.equal(dispatchedToCore, true, "validated plan reaches native OMP review");
+  assert.equal(validatedCoreResult.xdev.inner.planFilePath, "local://validated-feature-plan.md");
+  assert.equal(coreSelectedPlan, "local://validated-feature-plan.md");
   // Phase 4: Agent fixes the plan into an actionable UI-plan without CLI (structurally valid, actionable, and safe)
   const fixedFeatureContent = [
     "# Fixed Feature Plan",
@@ -268,8 +212,6 @@ try {
     input: { path: "xd://propose", content: "fixed-feature" },
   }, context);
 
-  // Assert advisor RAN on the new plan proposal!
-  assert.equal(advisorCalls.length, 2, "Advisor MUST execute to review the newly proposed UI plan");
   assert.equal(allowedResult, undefined, "Clean UI plan proposal must be allowed to pass the guard");
 
   // Since guard allowed it, OMP resolution device receives the proposal
@@ -278,15 +220,18 @@ try {
   assert.equal(coreResult.xdev.inner.planFilePath, "local://fixed-feature-plan.md");
   assert.equal(coreSelectedPlan, "local://fixed-feature-plan.md", "Human review dialog opens with the approved plan!");
 
-  // Phase 5: Re-proposing unchanged plan uses CACHE (deduplication) - zero extra tokens!
-  const callsBeforeRePropose = advisorCalls.length;
-  await toolHandler({
+  // Phase 5: The deterministic per-turn budget blocks an excess proposal.
+  dispatchedToCore = false;
+  coreSelectedPlan = null;
+  const repeatedResult = await toolHandler({
     toolName: "write",
     toolCallId: "propose-repeat-call",
     input: { path: "xd://propose", content: "fixed-feature" },
   }, context);
-  assert.equal(advisorCalls.length, callsBeforeRePropose, "Re-proposing unchanged plan must hit cache and spend 0 extra tokens");
 
+  assert.equal(repeatedResult?.block, true, "the fifth preflight-passed proposal must hit the turn budget");
+  assert.match(repeatedResult.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
+  assert.equal(dispatchedToCore, false, "an over-budget proposal must never reach core dispatch");
   // Phase 6: Native Refine (handleAgentStart) resets convergence cycle and allows new proposal
   await startHandler({
     prompt: "Refine plan: add more verification commands",
@@ -312,8 +257,7 @@ try {
     input: { path: "xd://propose", content: "refined-feature" },
   }, context);
 
-  assert.equal(refinedAllowed, undefined, "Refined proposal must pass validator and advisor after reset");
-  assert.equal(advisorCalls.length, 3, "Advisor must run on new refined proposal");
+  assert.equal(refinedAllowed, undefined, "Refined proposal must pass validator and native OMP review after reset");
 
   const coreRefinedResult = await dispatchResolutionDevice(ompSession, "propose", "refined-feature");
   assert.equal(dispatchedToCore, true, "Refined proposal reaches OMP core dispatch");
@@ -321,7 +265,6 @@ try {
 
   // Given an isolated session that entered Plan Mode,
   // When it proposes actionable Markdown without the injected core,
-  // Then strict validation blocks before the advisor and native review.
   const requiredMissingContext = await createIsolatedContext("required-missing", true);
   const requiredMissingContent = [
     "## Context",
@@ -332,7 +275,6 @@ try {
     "- `bun tests/e2e-real-plan-handoff.mjs` -> exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "required-missing-plan.md"), requiredMissingContent, "utf8");
-  const callsBeforeRequiredMissing = advisorCalls.length;
   const requiredMissing = await toolHandler({
     toolName: "write",
     toolCallId: "propose-required-missing",
@@ -340,11 +282,9 @@ try {
   }, requiredMissingContext);
   assert.equal(requiredMissing?.block, true, "activated session without a core must block");
   assert.match(requiredMissing.reason, /PLAN_CORE_REQUIRED/);
-  assert.equal(advisorCalls.length, callsBeforeRequiredMissing, "missing required core must spend zero advisor calls");
 
   // Given a second activated session,
   // When its leading core is malformed JSON,
-  // Then core validation blocks before the advisor.
   const requiredMalformedContext = await createIsolatedContext("required-malformed", true);
   const requiredMalformedContent = [
     "---",
@@ -352,7 +292,6 @@ try {
     "---",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "required-malformed-plan.md"), requiredMalformedContent, "utf8");
-  const callsBeforeRequiredMalformed = advisorCalls.length;
   const requiredMalformed = await toolHandler({
     toolName: "write",
     toolCallId: "propose-required-malformed",
@@ -360,11 +299,9 @@ try {
   }, requiredMalformedContext);
   assert.equal(requiredMalformed?.block, true, "malformed required core must block");
   assert.match(requiredMalformed.reason, /PLAN_CORE_INVALID/);
-  assert.equal(advisorCalls.length, callsBeforeRequiredMalformed, "malformed required core must spend zero advisor calls");
 
   // Given a third activated session,
   // When required core fields are empty,
-  // Then field validation blocks before the advisor.
   const requiredIncompleteContext = await createIsolatedContext("required-incomplete", true);
   const requiredIncompleteContent = [
     "---",
@@ -372,7 +309,6 @@ try {
     "---",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "required-incomplete-plan.md"), requiredIncompleteContent, "utf8");
-  const callsBeforeRequiredIncomplete = advisorCalls.length;
   const requiredIncomplete = await toolHandler({
     toolName: "write",
     toolCallId: "propose-required-incomplete",
@@ -383,11 +319,9 @@ try {
   assert.match(requiredIncomplete.reason, /sections\.context/);
   assert.match(requiredIncomplete.reason, /sections\.approach/);
   assert.match(requiredIncomplete.reason, /sections\.verification/);
-  assert.equal(advisorCalls.length, callsBeforeRequiredIncomplete, "incomplete required core must spend zero advisor calls");
 
   // Given a fourth activated session,
   // When it proposes a complete core,
-  // Then the advisor runs and native plan review receives the exact artifact.
   const requiredValidContext = await createIsolatedContext("required-valid", true);
   const requiredValidContent = [
     "---",
@@ -401,14 +335,12 @@ try {
     "---",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "required-valid-plan.md"), requiredValidContent, "utf8");
-  const callsBeforeRequiredValid = advisorCalls.length;
   const requiredValid = await toolHandler({
     toolName: "write",
     toolCallId: "propose-required-valid",
     input: { path: "xd://propose", content: "required-valid" },
   }, requiredValidContext);
   assert.equal(requiredValid, undefined, "complete required core must pass the guard");
-  assert.equal(advisorCalls.length, callsBeforeRequiredValid + 1, "complete required core must invoke advisor once");
   dispatchedToCore = false;
   coreSelectedPlan = null;
   const requiredValidCoreResult = await dispatchResolutionDevice(ompSession, "propose", "required-valid");
@@ -429,37 +361,28 @@ try {
     "- `bun tests/e2e-plan-validator.mjs` -> exit code 0",
   ].join("\n");
   await fs.writeFile(path.join(localRoot, "legacy-compatible-plan.md"), legacyCompatibleContent, "utf8");
-  const callsBeforeLegacy = advisorCalls.length;
   const legacyCompatible = await toolHandler({
     toolName: "write",
     toolCallId: "propose-legacy-compatible",
     input: { path: "xd://propose", content: "legacy-compatible" },
   }, legacyContext);
   assert.equal(legacyCompatible, undefined, "legacy Markdown outside activated Plan Mode must stay allowed");
-  assert.equal(advisorCalls.length, callsBeforeLegacy + 1, "legacy compatible plan must still reach advisor");
 
   process.stdout.write(`${JSON.stringify({
-    schema: "omp-plan-kit-real-handoff-e2e@5",
+    schema: "omp-plan-kit-real-handoff-e2e@6",
     decision: "pass",
     scenarios: {
       zeroWasteOnIntermediateTodo: true,
       validatorBlockedInvalidStructure: true,
       validatorBlockedNonActionablePlan: true,
-      advisorRanOnDefectivePlan: true,
-      advisorBlockedDefectivePlan: true,
-      advisorRanOnCleanPlan: true,
       cleanUIPlanApprovedAndDispatchedToCore: true,
-      unchangedPlanHitCache: true,
+      turnBudgetBlocksExcessProposal: true,
       refineResetsCycleAndDispatchesRefinedPlan: true,
       activatedSessionRequiresCore: true,
-      malformedRequiredCoreBlocksBeforeAdvisor: true,
-      incompleteRequiredCoreBlocksBeforeAdvisor: true,
       validRequiredCoreReachesNativeReview: true,
       legacyMarkdownOutsideActivatedSession: true,
     },
-    totalAdvisorCalls: advisorCalls.length,
-    blockedReason: blockedResult.reason,
-    approvedNotification: notifications[notifications.length - 1]?.message,
+    deterministicBlockReason: requiredMissing.reason,
     coreSelectedPlan,
   }, null, 2)}\n`);
 } finally {

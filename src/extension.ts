@@ -2,9 +2,7 @@ import crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { complete } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import type { Model } from "@oh-my-pi/pi-ai";
 import {
   PLAN_CORE_TEMPLATE,
   type PlanIssue,
@@ -25,11 +23,6 @@ const PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
 const LOCAL_ROOT = path.join(os.tmpdir(), "omp-local");
 const WINDOWS_LOCAL_ROOT_MAX_CHARS = 180;
 const RECEIPT_PATH = path.join(os.homedir(), ".omp", "agent", "omp-plan-kit-receipts.ndjson");
-const MAX_ADVISOR_CALLS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_CALLS, 3, 0, 10);
-const ADVISOR_COOLDOWN_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_COOLDOWN_MS, 0, 0, 86_400_000);
-const ADVISOR_TIMEOUT_MS = boundedNumber(process.env.OMP_PLAN_ADVISOR_TIMEOUT_MS, 15_000, 500, 60_000);
-const ADVISOR_MAX_TOKENS = boundedNumber(process.env.OMP_PLAN_ADVISOR_MAX_TOKENS, 160, 32, 256);
-const ADVISOR_MAX_OUTPUT_CHARS = 600;
 const MAX_FAILED_VALIDATIONS = 3;
 const MAX_SAME_HASH_REPEATS = 2;
 const MAX_NO_PROGRESS_ATTEMPTS = 2;
@@ -61,10 +54,6 @@ export type TurnValidationState = {
 };
 
 type SessionState = {
-  userPrompt: string;
-  calls: number;
-  lastCallAt: number;
-  cache: Map<string, { verdict: "APPROVE" | "REJECT"; reason: string }>;
   turnState: TurnValidationState;
 };
 
@@ -74,10 +63,7 @@ type ProposalCheck =
   | { ok: true; slug: string; planUrl: string; planPath: string; bytes: number; sha256: string }
   | { ok: false; code: string; reason: string };
 
-type CompleteFn = typeof complete;
-
 export type TestDependencies = {
-  complete?: CompleteFn;
   validatePlan?: typeof validatePlanStructure;
   requiresPlanCore?: (sessionId: string) => boolean;
 };
@@ -88,19 +74,10 @@ export function setTestDependencies(deps: TestDependencies): void {
   activeTestDependencies = deps;
 }
 
-function boundedNumber(raw: string | undefined, fallback: number, min: number, max: number): number {
-  const value = Number(raw);
-  return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
-}
-
 function stateFor(states: Map<string, SessionState>, sessionId: string): SessionState {
   const existing = states.get(sessionId);
   if (existing) return existing;
   const created: SessionState = {
-    userPrompt: "",
-    calls: 0,
-    lastCallAt: 0,
-    cache: new Map(),
     turnState: {
       turnId: 0,
       proposalCount: 0,
@@ -110,13 +87,6 @@ function stateFor(states: Map<string, SessionState>, sessionId: string): Session
   };
   states.set(sessionId, created);
   return created;
-}
-
-function redact(value: unknown, maxChars: number): string {
-  const stringified = String(value ?? "").replace(/\s+/gu, " ").trim().slice(0, maxChars);
-  return stringified
-    .replace(/\b(?:ghp|github_pat)_[A-Za-z0-9_]+\b/giu, "[REDACTED]")
-    .replace(/\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret|password)\s*[:=]\s*[^\s]+/giu, "$1=[REDACTED]");
 }
 
 function parseSlug(payload: unknown): { slug: string; planUrl: string } | null {
@@ -187,137 +157,6 @@ async function writeReceipt(data: Record<string, unknown>): Promise<void> {
   }
 }
 
-function resolveAdvisorModel(ctx: ExtensionContext): Model | undefined {
-  const spec = process.env.OMP_PLAN_ADVISOR_MODEL?.trim() || "@advisor";
-  return ctx.models.resolve(spec) ?? ctx.models.current();
-}
-
-/**
- * Reviews a completed plan artifact when exiting plan mode (xd://propose).
- * Runs strictly on proposal handoff, never on intermediate turns.
- */
-async function reviewProposedPlan(
-  ctx: ExtensionContext,
-  state: SessionState,
-  check: { slug: string; planUrl: string; planPath: string; sha256: string },
-  planContent: string,
-  completeImpl: CompleteFn,
-): Promise<{ verdict: "APPROVE" | "REJECT"; reason: string }> {
-  const sessionId = ctx.sessionManager.getSessionId();
-  const enabled = (process.env.OMP_PLAN_ADVISOR ?? "1").toLowerCase() !== "0";
-
-  // Fast-path: if this exact plan content was already reviewed in this session, return cached verdict (Zero waste!)
-  const cached = state.cache.get(check.sha256);
-  if (cached) {
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: cached.verdict, source: "cache" });
-    return cached;
-  }
-
-  if (!enabled || MAX_ADVISOR_CALLS === 0) {
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "advisor-disabled" });
-    return { verdict: "APPROVE", reason: "Advisor disabled; plan allowed by default." };
-  }
-
-  const now = Date.now();
-  if (state.calls >= MAX_ADVISOR_CALLS || (ADVISOR_COOLDOWN_MS > 0 && now - state.lastCallAt < ADVISOR_COOLDOWN_MS)) {
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "budget-suppressed" });
-    return { verdict: "APPROVE", reason: "Advisor call budget reached; handoff permitted." };
-  }
-
-  const model = resolveAdvisorModel(ctx);
-  if (!model) {
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "model-unavailable" });
-    return { verdict: "APPROVE", reason: "Advisor model unavailable; handoff permitted." };
-  }
-
-  const apiKey = await ctx.modelRegistry.getApiKey(model);
-  if (!apiKey) {
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "credential-unavailable" });
-    return { verdict: "APPROVE", reason: "Advisor credential unavailable; handoff permitted." };
-  }
-
-  state.calls += 1;
-  state.lastCallAt = now;
-
-  const boundedPrompt = redact(state.userPrompt, 600);
-  const boundedPlan = redact(planContent, 1200);
-
-  const promptText = [
-    "You are the OMP Plan Advisor reviewing a proposed plan at the exit of plan mode.",
-    "Evaluate whether this plan is viable, safe, and ready to hand off for execution.",
-    `User Objective / Constraints: ${boundedPrompt || "None specified"}`,
-    `Plan Artifact: ${check.planUrl}`,
-    "Plan Excerpt:",
-    boundedPlan,
-    "",
-    "Rules:",
-    "1. If the plan introduces forbidden changes, violates constraints, or lacks concrete steps, respond with:",
-    "REJECT: <clear explanation of what must be fixed in the plan, max 40 words>",
-    "2. If the plan is sound, safe, and ready for operator approval, respond with:",
-    "APPROVE: <brief confirmation, max 30 words>",
-  ].join("\n");
-
-  try {
-    const response = await completeImpl(
-      model,
-      {
-        messages: [{ role: "user", content: [{ type: "text", text: promptText }], timestamp: Date.now() }],
-      },
-      {
-        apiKey,
-        maxTokens: ADVISOR_MAX_TOKENS,
-        disableReasoning: true,
-        signal: AbortSignal.timeout(ADVISOR_TIMEOUT_MS),
-      },
-    );
-
-    const rawText = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text)
-      .join(" ")
-      .trim()
-      .slice(0, ADVISOR_MAX_OUTPUT_CHARS);
-
-    let verdict: "APPROVE" | "REJECT" = "APPROVE";
-    let reason = rawText;
-
-    if (/^REJECT\b/iu.test(rawText) || /отклон\w*/iu.test(rawText) || /запрещ\w*/iu.test(rawText)) {
-      verdict = "REJECT";
-      reason = rawText.replace(/^REJECT:\s*/iu, "").trim() || rawText;
-    } else if (/^APPROVE\b/iu.test(rawText)) {
-      verdict = "APPROVE";
-      reason = rawText.replace(/^APPROVE:\s*/iu, "").trim() || rawText;
-    }
-
-    const result = { verdict, reason };
-    state.cache.set(check.sha256, result);
-
-    const usageObj = typeof response.usage === "object" && response.usage !== null ? (response.usage as Record<string, unknown>) : undefined;
-
-    await writeReceipt({
-      sessionId,
-      slug: check.slug,
-      sha256: check.sha256,
-      verdict,
-      reason,
-      provider: model.provider,
-      model: model.id,
-      usage: usageObj,
-    });
-
-    if (ctx.hasUI) {
-      ctx.ui.notify(`Plan advisor [${verdict}]: ${reason}`, verdict === "REJECT" ? "warning" : "info");
-    }
-
-    return result;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    await writeReceipt({ sessionId, slug: check.slug, sha256: check.sha256, verdict: "APPROVE", source: "advisor-failed", error: errorMsg });
-    // Fail-open on advisor crash so deterministic safety is maintained
-    return { verdict: "APPROVE", reason: `Advisor call failed: ${errorMsg}` };
-  }
-}
-
 export function createPlanProtectionForTest(dependencies: TestDependencies = {}) {
   const states = new Map<string, SessionState>();
   const requiresPlanCore = dependencies.requiresPlanCore
@@ -325,13 +164,12 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
     ?? (() => false);
   return {
     async handleToolCall(event: { toolName?: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: ExtensionContext): Promise<GuardResult> {
-      const completeImpl = dependencies.complete ?? activeTestDependencies.complete ?? complete;
       const validatePlanImpl = dependencies.validatePlan ?? activeTestDependencies.validatePlan ?? validatePlanStructure;
       const sessionId = ctx.sessionManager.getSessionId();
       const state = stateFor(states, sessionId);
 
       // Trigger ONLY when proposing a plan (Plan Mode Exit / Handoff).
-      // Zero token waste: intermediate tools (todo, read, edit) NEVER call the LLM advisor.
+      // Intermediate tools (todo, read, edit) never affect proposal validation.
       if (event.toolName === "write" && event.input?.path === PROPOSE_PATH) {
         const turn = state.turnState;
         if (turn.blocked) {
@@ -503,30 +341,17 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
           };
         }
 
-        // 7. No structural issues: clear cycle for this slug and run advisor
+        // 7. No structural issues: clear cycle and hand off to native OMP review
         turn.cyclesBySlug.delete(check.slug);
-
-        // Step 3: Run Plan Advisor strictly on the finished plan artifact
-        const review = await reviewProposedPlan(ctx, state, check, planContent, completeImpl);
-
-        if (review.verdict === "REJECT") {
-          return {
-            block: true,
-            reason: `[PLAN_ADVISOR_BLOCK] Советник отклонил план: ${review.reason}`,
-          };
-        }
-
-        // Plan is approved by advisor: allow handoff to human review overlay
-        void writeReceipt({ sessionId, kind: "proposal-approved", slug: check.slug, sha256: check.sha256 }).catch(() => undefined);
+        void writeReceipt({ sessionId, kind: "proposal-validated", slug: check.slug, sha256: check.sha256 }).catch(() => undefined);
         return undefined;
       }
 
-      // All other tool calls pass without touching the advisor
+      // All other tool calls pass without touching proposal validation.
       return undefined;
     },
     async handleAgentStart(event: { prompt?: string }, ctx: ExtensionContext): Promise<void> {
       const state = stateFor(states, ctx.sessionManager.getSessionId());
-      state.userPrompt = event.prompt ?? "";
       state.turnState.turnId += 1;
       state.turnState.proposalCount = 0;
       state.turnState.blocked = false;

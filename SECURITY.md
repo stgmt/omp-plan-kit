@@ -17,7 +17,7 @@ For ordinary reproducible plan-handoff failures, redact local paths and report:
 ## Security properties
 
 - The hard guard fails closed on malformed proposal identity and missing exact artifacts.
-- The optional advisor is not an authorization mechanism.
-- The advisor receives bounded metadata rather than a full plan or transcript.
-- Credentials are resolved by OMP's model registry and are not persisted by this plugin.
+- Valid proposals are handed to native OMP review and watchdog logic after deterministic checks.
+- This plugin does not send plan contents to a plan-specific model or persist model credentials.
+- Any model credentials used by native OMP remain outside this plugin's storage.
 - Receipts are local diagnostic records and must not be uploaded without review.

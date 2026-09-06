@@ -1,3 +1,9 @@
+## [1.7.0] - 2026-09-06
+
+### Removed
+
+- Removed the plan-specific LLM advisor, its model configuration, cache, and advisor-only E2E suites. Valid proposals now continue from deterministic validation to native OMP review and watchdog logic.
+
 # OMP Plan Kit Changelog
 
 All notable changes to OMP Plan Kit are documented here.

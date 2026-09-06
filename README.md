@@ -7,23 +7,42 @@
 executed, and later reviewed as the same plan.**
 
 OMP Plan Kit provides deterministic stale-plan protection, actionable plan contracts, structural
-plan validation, bounded repair convergence, and native LLM review for OMP plan mode.
+plan validation, bounded repair convergence, and native OMP review for plan mode.
 
 - **Deterministic preflight:** strict slug grammar, session-local path containment, and exact artifact existence checks.
 - **Batch structural & actionable validation:** all independent structural and actionability errors returned in one actionable repair packet.
 - **Actionable plan contracts:** every Approach step names an exact target, and Verification contains observable, executable proof.
 - **Bounded convergence:** strict limits on failures, unchanged files, and no-progress churn to prevent infinite correction loops.
-- **Optional bounded advisor:** native OMP LLM review explains concrete defects without rewriting the plan.
-- **Native review boundary:** only verified, approved plans reach OMP's human-review overlay.
-- **Enter plan mode hook for OMP:** plugins can subscribe to `omp-plan-kit:enter-plan-mode`; OMP Plan Kit uses the same event to inject the mandatory machine-readable plan-core template and activate session-scoped enforcement.
+- **Deterministic handoff:** validated plans are passed to OMP native review and watchdog logic; this plugin does not call an LLM.
+- **Native review boundary:** only deterministically validated plans reach OMP's human-review overlay.
+- **Killer feature — user-friendly Enter Plan Mode hook:** plugins can subscribe to `omp-plan-kit:enter-plan-mode`; OMP Plan Kit uses the same event to inject the mandatory machine-readable plan-core template and activate session-scoped enforcement.
 - **Global installation:** install across OMP profiles via official plugin management.
+
+## Roadmap status
+
+### Delivered killer feature: user-friendly Enter Plan Mode hook
+
+The first major roadmap milestone is complete. OMP Plan Kit now publishes the synchronous
+`omp-plan-kit:enter-plan-mode` event on OMP's shared event bus. External OMP extensions can
+subscribe by channel name without importing this plugin.
+
+The built-in listener uses the same event to:
+
+- inject the exact machine-readable plan-core template;
+- activate a session-scoped requirement for that core;
+- keep one instruction per activation; and
+- require the core when that session later submits `xd://propose`.
+
+This keeps the extension boundary simple: one public event, one shared contract, and no
+plugin-specific mode detector. The hook is covered by real-loader, load-order, duplicate,
+failure-isolation, ACP, and mutation tests.
 
 ## Quick start
 
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.6.0
+omp plugin install github:stgmt/omp-plan-kit#v1.7.0
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -77,7 +96,7 @@ Call `addInstruction` synchronously before the listener returns; OMP's shared ev
 await asynchronous listeners. Instruction IDs are activation-scoped and first-wins on duplicates.
 OMP Plan Kit subscribes to this same public event. Its built-in listener injects the exact
 `PLAN_CORE_TEMPLATE` and records that the session must supply that core at handoff. Missing,
-malformed, or incomplete cores block before the advisor and before OMP's human-review overlay.
+malformed, or incomplete cores block before OMP's native review and before its human-review overlay.
 Sessions that never receive this event retain the legacy Markdown contract. The plugin does not
 claim a native `pi.on("enter_plan_mode")` event.
 
@@ -110,14 +129,7 @@ OMP write(path=xd://propose, content=<slug>)
           └─ sticky stop if budget exceeded (no ctx.abort overwrite)
                     │
                     ▼
-          3. Optional Native Advisor (LLM exit-gate)
-          ├─ in-session SHA-256 cache (zero extra tokens on repeat)
-          ├─ budget check (max 3 calls per session, 160 tokens)
-          ├─ bounded prompt + redacted plan excerpt
-          └─ APPROVE or REJECT with concise critique
-                    │
-                    ▼
-          4. OMP Native Review
+          3. OMP Native Review
           └─ open human review overlay (selectPlan)
 ```
 
@@ -149,7 +161,7 @@ this machine-readable JSON front matter. Replace placeholder values; keep every 
 ```
 
 A missing core returns `PLAN_CORE_REQUIRED`; malformed JSON or incomplete fields return
-`PLAN_CORE_INVALID`. Both block before the optional advisor. A valid core is the authoritative data
+`PLAN_CORE_INVALID`. Both block before OMP native review. A valid core is the authoritative data
 path, so prose after it may use any headings or language.
 
 For compatibility, sessions that did not receive the Plan Mode event continue through the existing
@@ -212,7 +224,7 @@ To protect against infinite repair loops and wasted context, the controller enfo
 
 ### Sticky turn latch vs `ctx.abort()`
 
-The controller uses a **sticky turn latch** instead of calling `ctx.abort()`. In OMP, invoking `ctx.abort()` inside a `tool_call` hook aborts the operation and overwrites the structured error message with a generic abort failure, hiding the exact defect list from the model and user. The sticky turn latch preserves the full `[PLAN_VALIDATOR_STOPPED]` diagnostic in the transcript while ensuring all subsequent handoff attempts in that turn return immediately in $O(1)$ without disk reads, validation runs, or advisor calls.
+The controller uses a **sticky turn latch** instead of calling `ctx.abort()`. In OMP, invoking `ctx.abort()` inside a `tool_call` hook aborts the operation and overwrites the structured error message with a generic abort failure, hiding the exact defect list from the model and user. The sticky turn latch preserves the full `[PLAN_VALIDATOR_STOPPED]` diagnostic in the transcript while ensuring all subsequent handoff attempts in that turn return immediately in $O(1)$ without disk reads, validation runs, or model calls.
 
 ### Reset on new prompt or native Refine
 
@@ -224,26 +236,13 @@ In OMP (`agent-loop.ts:2458-2469`), when a model outputs multiple tool calls in 
 
 Therefore, the plan file must be written in one turn, and `write xd://propose <slug>` must be called in a **subsequent turn** after the file write succeeds. Emitting both in the same batch triggers `PLAN_FILE_MISSING` by design.
 
-## Optional native OMP advisor (exit-gate)
+## Native OMP review boundary
 
-The advisor is an economical exit-gate that runs strictly after structural validation passes:
+OMP Plan Kit performs deterministic checks only. It does not call a plan-specific language model.
 
-- **Zero tokens on invalid plans**: syntax, structural, and actionability failures block before the advisor runs.
-- **Cache**: an unchanged plan re-proposal hits an in-session `SHA-256` cache and spends zero additional tokens.
-- **LLM review**: evaluates safety, repository boundaries, and concrete verification.
-  - `REJECT` → hard block `[PLAN_ADVISOR_BLOCK] Советник отклонил план: <reason>`; agent stays in plan mode.
-  - `APPROVE` → proposal passes through to OMP core dispatch.
-
-Configuration:
-
-| Variable | Default | Purpose |
-|---|---:|---|
-| `OMP_PLAN_ADVISOR` | `1` | Set `0` to disable only the LLM advisor |
-| `OMP_PLAN_ADVISOR_MAX_CALLS` | `3` | Per-session advisor call cap |
-| `OMP_PLAN_ADVISOR_COOLDOWN_MS` | `0` | Duplicate/cooldown window (0 = cache-only) |
-| `OMP_PLAN_ADVISOR_TIMEOUT_MS` | `15000` | Native OMP model-call timeout |
-| `OMP_PLAN_ADVISOR_MAX_TOKENS` | `160` | Output-token cap, clamped to 32–256 |
-| `OMP_PLAN_ADVISOR_MODEL` | `@advisor` | OMP model or role resolved by `ctx.models` |
+- Invalid, malformed, or non-actionable plans stop before OMP core dispatch.
+- Valid plans pass to OMP native review and watchdog logic unchanged.
+- The plugin has no plan-review model budget, model cache, or model configuration.
 
 ## Verification battery
 
@@ -256,16 +255,14 @@ bun tests/e2e-plan-validator.mjs          # batch structural & actionability val
 bun tests/e2e-validator-mutations.mjs     # BDD scenario x mutation matrix (every mutant must die)
 bun tests/e2e-convergence-controller.mjs  # convergence limits, progress, sticky latches
 bun tests/e2e-programmer.mjs              # slug mutations, edge cases, profile loader
-bun tests/e2e-advisor-contract.mjs        # advisor budget, token caps, cache deduplication
 bun tests/e2e-real-plan-handoff.mjs       # real in-process OMP dispatch & review overlay
-bun tests/e2e-advisor-live.mjs            # live model verification (gpt-5.6-sol)
 ```
 
 Run all tests:
 
 ```bash
 npm run check
-bun tests/e2e-plan-mode-hook.mjs && bun tests/e2e-plan-mode-hook-mutations.mjs && bun tests/e2e-validator-mutations.mjs && bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
+bun tests/e2e-plan-mode-hook.mjs && bun tests/e2e-plan-mode-hook-mutations.mjs && bun tests/e2e-validator-mutations.mjs && bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-real-plan-handoff.mjs
 ```
 
 ### Rollback and reinstall
@@ -279,7 +276,7 @@ omp plugin install github:stgmt/omp-plan-kit#v1.2.0
 
 ```text
 src/plan-validator.ts                  deterministic structural & actionability plan validator
-src/extension.ts                       convergence controller, preflight & advisor entrypoint
+src/extension.ts                       convergence controller, preflight & native OMP handoff
 src/plan-mode-hook.ts                    public plan-mode event broker and instruction injection
 dist/extension.js                      shipped OMP plugin bundle
 ROADMAP.md                             product direction and release gates
@@ -291,9 +288,7 @@ tests/e2e-plan-validator.mjs           structural & actionable validator tests
 tests/e2e-validator-mutations.mjs      BDD scenarios that kill source mutations of the gate
 tests/e2e-convergence-controller.mjs   convergence tests (churn, repeats, slug hopping, reset)
 tests/e2e-programmer.mjs               mutation and edge probe against OMP loader
-tests/e2e-advisor-contract.mjs         advisor bounds, token caps, cache deduplication
 tests/e2e-real-plan-handoff.mjs        real in-process handoff with OMP dispatchResolutionDevice
-tests/e2e-advisor-live.mjs             live native model review verification
 audit-reports/                         evidence, architecture decisions, and release notes
 ```
 
@@ -301,7 +296,7 @@ audit-reports/                         evidence, architecture decisions, and rel
 
 A plan submitted through `xd://propose` is validated in one of two ways.
 
-**1. Machine-readable core (recommended, opt-in).** If the plan starts with a JSON front-matter block, the validator checks the data and skips Markdown parsing entirely — headings and body language become irrelevant:
+**1. Machine-readable core (mandatory after Enter Plan Mode).** If the plan starts with a JSON front-matter block, the validator checks the data and skips Markdown parsing entirely — headings and body language become irrelevant:
 
 ```markdown
 ---
@@ -319,12 +314,12 @@ A plan submitted through `xd://propose` is validated in one of two ways.
 - Keys (`sections`, `context`, `approach`, `action`, `target`, `command`, `expects`) are format literals, like YAML keys: they are not translated. Values are free language.
 - The block must start at line 1 and close within the first 100 lines. Invalid JSON inside it fails closed (`PLAN_CORE_INVALID`), never silently parsed as Markdown. Unknown extra keys are ignored.
 
-**2. Markdown plan.** Without front-matter, the canonical section contract applies: heading lines `## Context`, `## Approach`, `## Verification` (exact English literals — section keys are format identifiers, like Kiro's EARS keywords or Spec Kit templates; they are not translated), approach steps with exact targets, and actionable verification proofs: inline `` `command` → result `` or a fenced command block followed immediately by a result line in any language (marker words like `Expected:` are accepted but not required).
+**2. Markdown plan (compatibility path).** Without front-matter, the canonical section contract applies: heading lines `## Context`, `## Approach`, `## Verification` (exact English literals — section keys are format identifiers, like Kiro's EARS keywords or Spec Kit templates; they are not translated), approach steps with exact targets, and actionable verification proofs: inline `` `command` → result `` or a fenced command block followed immediately by a result line in any language (marker words like `Expected:` are accepted but not required).
 
 ## Release
 
-Current release: [`v1.6.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.6.0).
+Current release: [`v1.7.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.7.0).
 
-Release review report: `audit-reports/omp-plan-kit-v1.6.0-review-2026-09-06.md`.
+Release review report: `audit-reports/omp-plan-kit-v1.7.0-review-2026-09-06.md`.
 
 License: MIT.

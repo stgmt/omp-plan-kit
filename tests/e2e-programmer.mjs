@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-process.env.OMP_PLAN_ADVISOR = "0";
 const home = os.homedir();
 const defaultAgentDir = path.join(home, ".omp", "agent");
 const profilesDir = path.join(home, ".omp", "profiles");

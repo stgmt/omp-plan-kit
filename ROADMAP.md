@@ -22,16 +22,27 @@ The product serves three readers:
 3. **Human reviewers** — need a readable plan, visible scope, rationale, risks, and proof of
    what changed.
 
-## Current baseline — v1.0 foundation
+## Current baseline — deterministic handoff and public Plan Mode hook
 
-Status: released as `omp-plan-kit` v1.0.0.
+Status: released as omp-plan-kit v1.7.0.
+
+### Delivered killer feature: user-friendly Enter Plan Mode hook
+
+- **Done:** OMP publishes the synchronous `omp-plan-kit:enter-plan-mode` event on the shared OMP event bus.
+- **Done:** external OMP extensions subscribe by channel name without importing this plugin or creating a second mode detector.
+- **Done:** the built-in listener injects the exact `PLAN_CORE_TEMPLATE` and activates the session-scoped requirement.
+- **Done:** activated sessions require that core at `xd://propose`; sessions without the event retain Markdown compatibility.
+- **Done:** real-loader, both load orders, duplicate, failure-isolation, ACP, and mutation coverage are implemented.
+- **Done:** the plugin performs deterministic checks only; valid proposals continue to native OMP review and watchdog logic.
+
+
 
 - Reject a full Markdown body sent to `xd://propose`.
 - Require one exact plan slug.
 - Require the exact `local://<slug>-plan.md` artifact before OMP dispatch.
 - Refuse missing-artifact fallback to another local plan.
 - Record the exact artifact SHA-256 for forensic identity.
-- Provide optional bounded native OMP advisor feedback.
+- Hand validated proposals to native OMP review and watchdog logic.
 - Install through the normal OMP plugin lifecycle for every existing OMP profile.
 
 This phase addresses the concrete stale-plan substitution failure. It does not attempt to
@@ -86,18 +97,13 @@ Target: make the same plan understandable to a person and usable by an agent.
   without mitigations.
 - Detect stale references to files, commands, requirements, and plan ids.
 
-### Bounded AI review
+### Native OMP review boundary
 
-- Run an LLM only after deterministic checks find a reviewable issue or at an explicit review
-  checkpoint.
-- Send a small evidence packet: plan section, finding, requirement/task ids, and the exact
-  question; never the full transcript by default.
-- Cap calls per session, output tokens, and repeated signatures.
-- Show advice to the human and agent without allowing the LLM to approve, rewrite, or bypass
-  the hard guard.
-- Store a redacted receipt with model, budget, finding id, and result status.
+- Keep this plugin deterministic: validate structure, completeness, and repair convergence before handoff.
+- Pass validated proposals to native OMP review and watchdog logic; this plugin neither approves nor rewrites plans with a model.
+- Keep plugin diagnostics and receipts local; native OMP owns any model-driven review and its budget.
 
-Release gate: advisor absence or failure leaves deterministic validation and safety unchanged.
+Release gate: native OMP review or watchdog failures must not weaken deterministic validation or safety.
 
 ## Phase 4 — Plan-Pomogator workflow
 
@@ -181,5 +187,5 @@ plugin manager and passes the manual installed-package E2E.
 - Major release: a breaking plan protocol or approval identity change.
 
 Every release must include a manual E2E report covering the installed package, malformed and
-missing inputs, exact positive paths, stale-plan controls, profile installation, advisor budget,
+missing inputs, exact positive paths, stale-plan controls, profile installation, native OMP review and watchdog behavior,
 and rollback.

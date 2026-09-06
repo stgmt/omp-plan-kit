@@ -6,21 +6,21 @@
 
 - Package: `omp-plan-kit`.
 - Product: OMP Plan Kit for safe, readable, traceable AI coding plans.
-- Current release: `v1.1.0`.
+- Current release: v1.7.0.
 - Runtime entrypoint: `dist/extension.js` through `package.json#omp.extensions`.
 - Current hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
 - Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` artifact already exists.
-- Invalid Markdown, empty, whitespace, traversal, or missing-artifact proposals are blocked before OMP dispatch as `PLAN_HANDOFF_*` with zero advisor tokens.
-- Valid slug/artifact proposals trigger the plan advisor exit-gate: the advisor reviews the completed plan artifact against the user's objective/constraints. `REJECT` → `[PLAN_ADVISOR_BLOCK]` before OMP dispatch; `APPROVE` → pass through to operator review. In-session `SHA-256` cache prevents re-spending.
-- Intermediate planning steps (`todo`, reads, scratch edits) spend zero advisor tokens.
-- Optional advisor: OMP native `complete()` call, max 160 output tokens, reasoning disabled, three calls per session cap, UI-only output.
+- Invalid Markdown, empty, whitespace, traversal, or missing-artifact proposals are blocked before OMP dispatch with zero model calls.
+- Valid slug/artifact proposals pass deterministic validation and continue to OMP native review and watchdog logic.
+- Intermediate planning steps (todo, reads, scratch edits) do not call a plan-specific model.
+- No plan-specific model call, model budget, or model verdict cache exists in this plugin.
+- Manual proof: e2e handoff plus the deterministic validator and hook suites.
 - No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
-- User install: `omp plugin install github:stgmt/omp-plan-kit#v1.1.0`.
+- User install: omp plugin install github:stgmt/omp-plan-kit#v1.7.0.
 - All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
-- Manual advisor proof: `npm run e2e:advisor`, `npm run e2e:handoff`, and `npm run e2e:advisor:live`.
 - Product roadmap: `ROADMAP.md`.
-- Release review: `audit-reports/plan-advisor-exit-gate-2026-09-03.md`.
+- Release review: audit-reports/omp-plan-kit-v1.7.0-review-2026-09-06.md.
 - Origin incident: https://github.com/can1357/oh-my-pi/issues/10333.
 - Reported impact: an older plan was accepted after a scope correction, costing roughly half of one week's Codex allowance on the maximum subscription tier.
 
@@ -38,7 +38,9 @@ omp plugin install github:stgmt/omp-plan-kit#v1.1.0
 
 ## Safety boundary
 
-The deterministic plan artifact identity check is the source of truth. The advisor is an economical exit-gate that can reject defective plans before handoff, but it cannot approve, rewrite, or unblock a hard guard decision, and its failure never weakens the guard.
+- Deterministic validation and convergence checks run before native OMP review.
+- This plugin does not call a plan-specific model, store model credentials, or upload full plans or transcripts.
+- Native OMP owns any model-driven review after the plugin allows a valid proposal.
 
 ## Repository
 
