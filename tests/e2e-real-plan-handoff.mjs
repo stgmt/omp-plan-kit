@@ -21,10 +21,12 @@ const plugin = loaded.extensions[0];
 const toolHandler = plugin?.handlers.get("tool_call")?.[0];
 const startHandler = plugin?.handlers.get("before_agent_start")?.[0];
 const contextHandler = plugin?.handlers.get("context")?.[0];
+const toolResultHandler = plugin?.handlers.get("tool_result")?.[0];
 
 assert.ok(toolHandler, "tool_call handler must be registered");
 assert.ok(startHandler, "before_agent_start handler must be registered");
 assert.ok(contextHandler, "context handler must be registered");
+assert.ok(toolResultHandler, "tool_result handler must be registered");
 assert.equal(typeof extensionModule.PLAN_CORE_TEMPLATE, "string", "bundle must export the plan-core template");
 
 const sessionId = `real-plan-handoff-e2e-${process.pid}-${Date.now()}`;
@@ -232,6 +234,20 @@ try {
   assert.equal(repeatedResult?.block, true, "the fifth preflight-passed proposal must hit the turn budget");
   assert.match(repeatedResult.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
   assert.equal(dispatchedToCore, false, "an over-budget proposal must never reach core dispatch");
+
+  // Phase 5b: ask tool_result resets turn budget and unblocks handoff to core
+  toolResultHandler({ toolName: "ask", isError: false }, context);
+  const unblockedResult = await toolHandler({
+    toolName: "write",
+    toolCallId: "ask-unblocked-call",
+    input: { path: "xd://propose", content: "fixed-feature" },
+  }, context);
+  assert.equal(unblockedResult, undefined, "ask tool_result must reset turn budget and allow handoff to core");
+  await dispatchResolutionDevice(ompSession, "propose", "fixed-feature");
+  assert.equal(dispatchedToCore, true, "unblocked proposal must reach core dispatch");
+  dispatchedToCore = false;
+  coreSelectedPlan = null;
+
   // Phase 6: Native Refine (handleAgentStart) resets convergence cycle and allows new proposal
   await startHandler({
     prompt: "Refine plan: add more verification commands",

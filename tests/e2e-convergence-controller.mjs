@@ -265,7 +265,74 @@ try {
   }
 
   // -----------------------------------------------------------------------
-  // Test 7: ctx.abort() has ZERO calls throughout
+  // Test 7: Successful ask tool_result resets turn block and cycles; failed or non-ask does not
+  // -----------------------------------------------------------------------
+  {
+    const policy = createPlanProtectionForTest();
+    await policy.handleAgentStart({ prompt: "User task ask test" }, context);
+
+    // Trip the turn budget with 5 proposals
+    for (let i = 1; i <= 4; i++) {
+      const slug = `ask-slug-${i}`;
+      await fs.writeFile(path.join(localRoot, `${slug}-plan.md`), `# Incomplete ${i}\n`, "utf8");
+      await policy.handleToolCall({
+        toolName: "write",
+        toolCallId: `ask-hop-${i}`,
+        input: { path: "xd://propose", content: slug },
+      }, context);
+    }
+    const slug5 = "ask-slug-5";
+    await fs.writeFile(path.join(localRoot, `${slug5}-plan.md`), "# Incomplete 5\n", "utf8");
+    const res5 = await policy.handleToolCall({
+      toolName: "write",
+      toolCallId: "ask-hop-5",
+      input: { path: "xd://propose", content: slug5 },
+    }, context);
+    assert.equal(res5?.block, true);
+    assert.match(res5.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
+
+    // Negative check 1: non-ask tool result (e.g. read) does NOT reset turn block
+    policy.handleToolResult({ toolName: "read", isError: false }, context);
+    const resAfterRead = await policy.handleToolCall({
+      toolName: "write",
+      toolCallId: "after-read-call",
+      input: { path: "xd://propose", content: slug5 },
+    }, context);
+    assert.equal(resAfterRead?.block, true);
+    assert.match(resAfterRead.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
+
+    // Negative check 2: cancelled ask (isError: true) does NOT reset turn block
+    policy.handleToolResult({ toolName: "ask", isError: true }, context);
+    const resAfterCancelledAsk = await policy.handleToolCall({
+      toolName: "write",
+      toolCallId: "after-cancelled-ask-call",
+      input: { path: "xd://propose", content: slug5 },
+    }, context);
+    assert.equal(resAfterCancelledAsk?.block, true);
+    assert.match(resAfterCancelledAsk.reason, /PLAN_VALIDATOR_TURN_BLOCKED/);
+
+    // Positive check: successful ask (isError: false) DOES reset turn block and cycles
+    policy.handleToolResult({ toolName: "ask", isError: false }, context);
+
+    const validPlan = [
+      "## Context",
+      "Context after ask reset",
+      "## Approach",
+      "1. Approach after ask reset in `src/feature.ts`.",
+      "## Verification",
+      "- `bun test` → exit code 0",
+    ].join("\n");
+    await fs.writeFile(path.join(localRoot, "ask-fresh-plan.md"), validPlan, "utf8");
+    const resFresh = await policy.handleToolCall({
+      toolName: "write",
+      toolCallId: "ask-fresh-call",
+      input: { path: "xd://propose", content: "ask-fresh" },
+    }, context);
+    assert.equal(resFresh, undefined, "successful ask tool_result must reset turn block and allow valid handoff");
+  }
+
+  // -----------------------------------------------------------------------
+  // Test 8: ctx.abort() has ZERO calls throughout
   // -----------------------------------------------------------------------
   assert.equal(abortCalls, 0, "ctx.abort() must NEVER be called inside tool_call hook");
 
@@ -280,11 +347,12 @@ try {
       stickyStopBlockEffectiveInConstantTime: true,
       turnLimitEnforcedOnSlugHopping: true,
       agentStartResetsTurnBlockAndCycles: true,
+      askToolResultResetsTurnBlockAndCycles: true,
       validatorExceptionBlocksFailClosed: true,
       ctxAbortRemainsZeroCalls: true,
       deterministicBlocksStayModelFree: true,
     },
-    totalTests: 7,
+    totalTests: 8,
     abortCalls,
     notifyCalls,
   }, null, 2)}\n`);

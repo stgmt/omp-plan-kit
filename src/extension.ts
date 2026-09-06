@@ -175,7 +175,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
         if (turn.blocked) {
           return {
             block: true,
-            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Wait for user feedback or native Refine.",
+            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Wait for user feedback (call ask in plan mode) or native Refine.",
           };
         }
 
@@ -190,7 +190,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
           turn.blocked = true;
           return {
             block: true,
-            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback or native Refine.",
+            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback (call ask in plan mode) or native Refine.",
           };
         }
 
@@ -213,7 +213,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
         if (cycle.blocked) {
           return {
             block: true,
-            reason: "[PLAN_VALIDATOR_BLOCKED] Automatic repair is stopped for this user turn. Do not call xd://propose again; wait for user feedback or native Refine.",
+            reason: "[PLAN_VALIDATOR_BLOCKED] Automatic repair is stopped for this user turn. Do not call xd://propose again; wait for user feedback (call ask in plan mode) or native Refine.",
           };
         }
 
@@ -239,7 +239,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
             });
             return {
               block: true,
-              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Plan file was repeated without changes (${cycle.sameHashCount} times). Do not call xd://propose again; wait for user feedback or native Refine. Remaining issues:\n\n${formatRepairPacket(check.slug, cycle.lastIssues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`,
+              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Plan file was repeated without changes (${cycle.sameHashCount} times). Do not call xd://propose again; wait for user feedback (call ask in plan mode) or native Refine. Remaining issues:\n\n${formatRepairPacket(check.slug, cycle.lastIssues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`,
             };
           }
 
@@ -320,7 +320,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
             });
             return {
               block: true,
-              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Maximum repair attempts or no-progress limit reached (${cycle.failedAttempts} attempts, ${cycle.noProgressCount} no-progress iterations). Do not call xd://propose again; wait for user feedback or native Refine. Remaining issues:\n\n${formatRepairPacket(check.slug, issues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`,
+              reason: `[PLAN_VALIDATOR_STOPPED] Automatic plan validation stopped for "${check.slug}". Maximum repair attempts or no-progress limit reached (${cycle.failedAttempts} attempts, ${cycle.noProgressCount} no-progress iterations). Do not call xd://propose again; wait for user feedback (call ask in plan mode) or native Refine. Remaining issues:\n\n${formatRepairPacket(check.slug, issues, cycle.failedAttempts, MAX_FAILED_VALIDATIONS)}`,
             };
           }
 
@@ -357,6 +357,15 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
       state.turnState.blocked = false;
       state.turnState.cyclesBySlug.clear();
     },
+    handleToolResult(event: { toolName?: string; isError?: boolean }, ctx: ExtensionContext): void {
+      if (event.toolName === "ask" && !event.isError) {
+        const state = stateFor(states, ctx.sessionManager.getSessionId());
+        state.turnState.turnId += 1;
+        state.turnState.proposalCount = 0;
+        state.turnState.blocked = false;
+        state.turnState.cyclesBySlug.clear();
+      }
+    },
   };
 }
 
@@ -392,6 +401,7 @@ export default function planProtection(pi: ExtensionAPI): void {
   });
   pi.on("context", (event, ctx) => broker.handleContext(event, ctx));
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));
+  pi.on("tool_result", (event, ctx) => policy.handleToolResult(event, ctx));
   pi.on("session_shutdown", (_event, ctx) => {
     const sessionId = ctx.sessionManager.getSessionId();
     broker.clearSession(sessionId);

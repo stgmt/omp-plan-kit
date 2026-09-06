@@ -1,3 +1,9 @@
+## [1.7.1] - 2026-09-06
+
+### Fixed
+
+- Successful `ask` answers (`tool_result`, no error) now reset the turn budget (`turnId` increment, `proposalCount` and `turn.blocked` cleared, per-slug cycles dropped); cancelled `ask` and other tool results leave the budget untouched. Block reasons now tell Plan Mode agents to call `ask` instead of waiting in prose, which removes the `PLAN_VALIDATOR_TURN_BLOCKED` vs plan-mode system-reminder deadlock.
+
 ## [1.7.0] - 2026-09-06
 
 ### Removed

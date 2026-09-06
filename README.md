@@ -42,7 +42,7 @@ failure-isolation, ACP, and mutation tests.
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.7.0
+omp plugin install github:stgmt/omp-plan-kit#v1.7.1
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -226,9 +226,9 @@ To protect against infinite repair loops and wasted context, the controller enfo
 
 The controller uses a **sticky turn latch** instead of calling `ctx.abort()`. In OMP, invoking `ctx.abort()` inside a `tool_call` hook aborts the operation and overwrites the structured error message with a generic abort failure, hiding the exact defect list from the model and user. The sticky turn latch preserves the full `[PLAN_VALIDATOR_STOPPED]` diagnostic in the transcript while ensuring all subsequent handoff attempts in that turn return immediately in $O(1)$ without disk reads, validation runs, or model calls.
 
-### Reset on new prompt or native Refine
+### Reset on new prompt, native Refine, or answered ask
 
-Starting a new user turn (`before_agent_start`) or triggering OMP's native `Refine plan` action increments `turnId`, clears turn/cycle blocks, and grants a fresh budget for the next iteration.
+Starting a new user turn (`before_agent_start`), triggering OMP's native `Refine plan` action, or receiving a successful `ask` answer (`tool_result` with `toolName` ask and no error) increments `turnId`, clears turn/cycle blocks, and grants a fresh budget for the next iteration. A cancelled `ask` or any other tool result leaves the budget untouched.
 
 ## Batch tool-call race condition
 
@@ -269,7 +269,7 @@ bun tests/e2e-plan-mode-hook.mjs && bun tests/e2e-plan-mode-hook-mutations.mjs &
 
 ```bash
 omp plugin uninstall omp-plan-kit
-omp plugin install github:stgmt/omp-plan-kit#v1.6.0
+omp plugin install github:stgmt/omp-plan-kit#v1.7.0
 ```
 
 ## Repository map
@@ -318,7 +318,7 @@ A plan submitted through `xd://propose` is validated in one of two ways.
 
 ## Release
 
-Current release: [`v1.7.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.7.0).
+Current release: [`v1.7.1`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.7.1).
 
 Release review report: `audit-reports/omp-plan-kit-v1.7.0-review-2026-09-06.md`.
 

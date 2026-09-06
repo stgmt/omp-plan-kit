@@ -6,7 +6,7 @@
 
 - Package: `omp-plan-kit`.
 - Product: OMP Plan Kit for safe, readable, traceable AI coding plans.
-- Current release: v1.7.0.
+- Current release: v1.7.1.
 - Runtime entrypoint: `dist/extension.js` through `package.json#omp.extensions`.
 - Current hard guard: programmer-only `tool_call` interception for `write` calls targeting `xd://propose`.
 - Accepted proposal: one strict plan slug whose exact `local://<slug>-plan.md` artifact already exists.
@@ -16,7 +16,7 @@
 - No plan-specific model call, model budget, or model verdict cache exists in this plugin.
 - Manual proof: e2e handoff plus the deterministic validator and hook suites.
 - No external proxy dependency. No `claude -p`. No transcript or full-plan upload.
-- User install: omp plugin install github:stgmt/omp-plan-kit#v1.7.0.
+- User install: omp plugin install github:stgmt/omp-plan-kit#v1.7.1.
 - All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Product roadmap: `ROADMAP.md`.

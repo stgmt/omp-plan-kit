@@ -24,7 +24,7 @@ The product serves three readers:
 
 ## Current baseline — deterministic handoff and public Plan Mode hook
 
-Status: released as omp-plan-kit v1.7.0.
+Status: released as omp-plan-kit v1.7.1.
 
 ### Delivered killer feature: user-friendly Enter Plan Mode hook
 

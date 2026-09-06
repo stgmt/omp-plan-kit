@@ -470,7 +470,7 @@ const BUDGET_BLOCK = `        turn.proposalCount += 1;
           turn.blocked = true;
           return {
             block: true,
-            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback or native Refine.",
+            reason: "[PLAN_VALIDATOR_TURN_BLOCKED] Plan handoff budget exceeded for this user turn. Too many proposals without progress; wait for user feedback (call ask in plan mode) or native Refine.",
           };
         }
 `;
