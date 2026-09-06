@@ -14,6 +14,8 @@ const buildRoot = path.join(repoRoot, ".mutation-build");
 
 const VALIDATOR = path.join(repoRoot, "src", "plan-validator.ts");
 const EXTENSION = path.join(repoRoot, "src", "extension.ts");
+const PLAN_MODE_HOOK = path.join(repoRoot, "src", "plan-mode-hook.ts");
+const PLAN_CORE_REQUIREMENT = path.join(repoRoot, "src", "plan-core-requirement.ts");
 const ENTRY = path.join(repoRoot, "src", "extension.ts");
 
 // ---------------------------------------------------------------------------
@@ -346,6 +348,48 @@ const SCENARIOS = [
     },
   },
   {
+    id: "V-core-required-missing",
+    given: "a plan-mode session requires the machine-readable core",
+    when: "validatePlanStructure runs on an otherwise valid Markdown plan",
+    then: "exactly one PLAN_CORE_REQUIRED blocks line 1",
+    kind: "validator",
+    options: { requirePlanCore: true },
+    input: [
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/x.ts`.",
+      "## Verification",
+      "- `bun test` → exit code 0",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].code, "PLAN_CORE_REQUIRED");
+    },
+  },
+  {
+    id: "V-core-required-unclosed",
+    given: "a required plan core opens but does not close",
+    when: "validatePlanStructure runs in strict mode",
+    then: "exactly one PLAN_CORE_INVALID reports the missing delimiter",
+    kind: "validator",
+    options: { requirePlanCore: true },
+    input: [
+      "---",
+      "## Context",
+      "Context.",
+      "## Approach",
+      "1. Change `src/x.ts`.",
+      "## Verification",
+      "- `bun test` → exit code 0",
+    ].join("\n"),
+    assert(issues) {
+      assert.equal(issues.length, 1);
+      assert.equal(issues[0].code, "PLAN_CORE_INVALID");
+      assert.match(issues[0].message, /no closing delimiter/);
+    },
+  },
+  {
     id: "V-core-broken-json",
     given: "a leading front-matter block containing broken JSON",
     when: "validatePlanStructure runs",
@@ -478,8 +522,22 @@ const MUTATIONS = [
     id: "M-drop-core-path",
     file: VALIDATOR,
     why: "the data path must take precedence: a valid core passes without English headings",
-    from: "  const parsedCore = parsePlanCore(markdown.split(/\\r?\\n/));",
+    from: "  const parsedCore = parsePlanCore(coreLines);",
     to: "  const parsedCore = { issues: [] };",
+  },
+  {
+    id: "M-core-required-bypass",
+    file: VALIDATOR,
+    why: "strict plan-mode validation must reject a plan without the machine-readable core",
+    from: "  if (options.requirePlanCore && !startsWithPlanCore) return [coreRequiredIssue()];",
+    to: "  if (false) return [coreRequiredIssue()];",
+  },
+  {
+    id: "M-core-required-unclosed",
+    file: VALIDATOR,
+    why: "strict plan-mode validation must reject an unterminated core instead of falling back to Markdown",
+    from: "  if (options.requirePlanCore && startsWithPlanCore && parsedCore.blockEndLine === undefined) {",
+    to: "  if (false) {",
   },
   {
     id: "M-core-lenient-context",
@@ -542,7 +600,7 @@ async function runScenarios(module, kind) {
       if (kind && scenario.kind !== kind) continue;
       try {
         if (scenario.kind === "validator") {
-          scenario.assert(module.validatePlanStructure(scenario.input));
+          scenario.assert(module.validatePlanStructure(scenario.input, scenario.options));
         } else {
           await scenario.run(module, scratch);
         }
@@ -587,6 +645,8 @@ async function main() {
       const lf = (text) => text.replace(/\r\n/g, "\n");
       const original = lf(await fs.readFile(mutation.file, "utf8"));
       const otherOriginal = lf(await fs.readFile(mutation.file === VALIDATOR ? EXTENSION : VALIDATOR, "utf8"));
+      const planModeHookOriginal = lf(await fs.readFile(PLAN_MODE_HOOK, "utf8"));
+      const planCoreRequirementOriginal = lf(await fs.readFile(PLAN_CORE_REQUIREMENT, "utf8"));
       const mutated = typeof mutation.apply === "function"
         ? await mutation.apply(original)
         : mustReplace(original, mutation.from, mutation.to, mutation.id);
@@ -598,6 +658,8 @@ async function main() {
       await fs.mkdir(scratchSrc, { recursive: true });
       await fs.writeFile(path.join(scratchSrc, path.basename(VALIDATOR)), mutation.file === VALIDATOR ? mutated : otherOriginal, "utf8");
       await fs.writeFile(path.join(scratchSrc, path.basename(EXTENSION)), mutation.file === EXTENSION ? mutated : otherOriginal, "utf8");
+      await fs.writeFile(path.join(scratchSrc, path.basename(PLAN_MODE_HOOK)), planModeHookOriginal, "utf8");
+      await fs.writeFile(path.join(scratchSrc, path.basename(PLAN_CORE_REQUIREMENT)), planCoreRequirementOriginal, "utf8");
       const entry = path.join(scratchSrc, path.basename(EXTENSION));
       const outfile = path.join(dir, "extension.js");
       const result = spawnSync("bun", [

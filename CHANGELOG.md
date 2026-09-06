@@ -2,6 +2,16 @@
 
 All notable changes to OMP Plan Kit are documented here.
 
+## [1.6.0] - 2026-09-06
+
+### Added
+
+- Public `omp-plan-kit:enter-plan-mode` event on OMP's shared extension bus. External plugins can synchronously contribute hidden plan-mode instructions without importing OMP Plan Kit, and the built-in format contract consumes the same API.
+- The built-in listener injects the byte-exact exported `PLAN_CORE_TEMPLATE` and activates a session-scoped requirement registry for proposals created in Plan Mode.
+- Activated sessions now fail closed before the advisor and native review: missing front matter returns `PLAN_CORE_REQUIRED`; malformed JSON or incomplete required fields return `PLAN_CORE_INVALID`. Sessions that never receive the event retain the legacy Markdown path.
+- Activation tracking for interactive `mode_change` journal entries and journal-free ACP sessions, with one event per activation, first-wins instruction IDs, and cleanup after plan-mode exit.
+- Real-loader behavior, mutation coverage, and isolated strict/legacy handoff scenarios in `tests/e2e-plan-mode-hook.mjs`, `tests/e2e-plan-mode-hook-mutations.mjs`, and `tests/e2e-real-plan-handoff.mjs`.
+
 ## [1.5.0] - 2026-09-05
 
 ### Added

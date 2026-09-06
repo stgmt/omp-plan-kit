@@ -15,6 +15,7 @@ plan validation, bounded repair convergence, and native LLM review for OMP plan 
 - **Bounded convergence:** strict limits on failures, unchanged files, and no-progress churn to prevent infinite correction loops.
 - **Optional bounded advisor:** native OMP LLM review explains concrete defects without rewriting the plan.
 - **Native review boundary:** only verified, approved plans reach OMP's human-review overlay.
+- **Enter plan mode hook for OMP:** plugins can subscribe to `omp-plan-kit:enter-plan-mode`; OMP Plan Kit uses the same event to inject the mandatory machine-readable plan-core template and activate session-scoped enforcement.
 - **Global installation:** install across OMP profiles via official plugin management.
 
 ## Quick start
@@ -22,7 +23,7 @@ plan validation, bounded repair convergence, and native LLM review for OMP plan 
 ### Install the released plugin as an OMP user
 
 ```bash
-omp plugin install github:stgmt/omp-plan-kit#v1.3.0
+omp plugin install github:stgmt/omp-plan-kit#v1.6.0
 ```
 
 OMP isolates named profiles. For every existing profile on this PC, run the profile-aware
@@ -47,6 +48,39 @@ For a named profile:
 omp --profile live-test plugin list --json
 ```
 
+## Public enter-plan-mode hook
+
+After installation, OMP Plan Kit publishes `omp-plan-kit:enter-plan-mode` on OMP's shared
+`ExtensionAPI.events` bus. Another extension can subscribe by channel name; no import from
+`omp-plan-kit` is required:
+
+```ts
+pi.events.on("omp-plan-kit:enter-plan-mode", (raw) => {
+  const event = raw as {
+    apiVersion: 1;
+    sessionId: string;
+    activationId: string;
+    planFilePath?: string;
+    addInstruction(input: { id: string; content: string }): void;
+  };
+
+  if (event.apiVersion !== 1) return;
+  event.addInstruction({
+    id: "example-plugin:planning-rules",
+    content: "Keep each implementation step bound to an exact code target.",
+  });
+});
+```
+
+The event marks the first model request after entering plan mode, not the `/plan` UI action.
+Call `addInstruction` synchronously before the listener returns; OMP's shared event bus does not
+await asynchronous listeners. Instruction IDs are activation-scoped and first-wins on duplicates.
+OMP Plan Kit subscribes to this same public event. Its built-in listener injects the exact
+`PLAN_CORE_TEMPLATE` and records that the session must supply that core at handoff. Missing,
+malformed, or incomplete cores block before the advisor and before OMP's human-review overlay.
+Sessions that never receive this event retain the legacy Markdown contract. The plugin does not
+claim a native `pi.on("enter_plan_mode")` event.
+
 ## Runtime pipeline
 
 Handoff follows a strict four-stage pipeline when exiting plan mode (`write xd://propose <slug>`):
@@ -66,7 +100,9 @@ OMP write(path=xd://propose, content=<slug>)
           2. Plan Validator & Convergence (0 tokens)
           ├─ sticky turn latch check (MAX_TURN_PROPOSALS = 4)
           ├─ unchanged SHA check (MAX_SAME_HASH_REPEATS = 2)
-          ├─ validate canonical sections (## Context, ## Approach, ## Verification)
+          ├─ require the injected JSON plan core for activated Plan Mode sessions (PLAN_CORE_REQUIRED)
+          ├─ validate core JSON and required fields (PLAN_CORE_INVALID)
+          ├─ otherwise validate canonical Markdown sections (## Context, ## Approach, ## Verification)
           ├─ validate Approach step targets (APPROACH_TARGET_MISSING)
           ├─ validate Verification actionable proof (VERIFICATION_NOT_ACTIONABLE)
           ├─ progress tracking (fewer issues vs churn, MAX_NO_PROGRESS_ATTEMPTS = 2)
@@ -87,9 +123,39 @@ OMP write(path=xd://propose, content=<slug>)
 
 ## Plan structure contract
 
-The validator parses Markdown level `##` headings outside of code fences:
+For a session observed through `omp-plan-kit:enter-plan-mode`, the plan MUST begin on line 1 with
+this machine-readable JSON front matter. Replace placeholder values; keep every key unchanged:
 
-### Mandatory sections (in exact canonical order)
+```text
+---
+{
+  "sections": {
+    "context": "<task description, any language>",
+    "approach": [
+      {
+        "action": "<what to do>",
+        "target": "<exact file, symbol, route, or UI path>"
+      }
+    ],
+    "verification": [
+      {
+        "command": "<command or exact verification surface>",
+        "expects": "<observable result, any language>"
+      }
+    ]
+  }
+}
+---
+```
+
+A missing core returns `PLAN_CORE_REQUIRED`; malformed JSON or incomplete fields return
+`PLAN_CORE_INVALID`. Both block before the optional advisor. A valid core is the authoritative data
+path, so prose after it may use any headings or language.
+
+For compatibility, sessions that did not receive the Plan Mode event continue through the existing
+Markdown validator. It parses level `##` headings outside code fences:
+
+### Mandatory Markdown sections (in exact canonical order)
 
 1. `## Context` — problem description, current state, and background.
 2. `## Approach` — step-by-step implementation changes and technical details with exact targets.
@@ -184,6 +250,8 @@ Configuration:
 All behavioral probes live in `tests/`:
 
 ```bash
+bun tests/e2e-plan-mode-hook.mjs         # shared event, activation lifecycle, and external consumer
+bun tests/e2e-plan-mode-hook-mutations.mjs # mutation protection for detection, event bus, and deduplication
 bun tests/e2e-plan-validator.mjs          # batch structural & actionability validator contract
 bun tests/e2e-validator-mutations.mjs     # BDD scenario x mutation matrix (every mutant must die)
 bun tests/e2e-convergence-controller.mjs  # convergence limits, progress, sticky latches
@@ -197,7 +265,7 @@ Run all tests:
 
 ```bash
 npm run check
-bun tests/e2e-validator-mutations.mjs && bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
+bun tests/e2e-plan-mode-hook.mjs && bun tests/e2e-plan-mode-hook-mutations.mjs && bun tests/e2e-validator-mutations.mjs && bun tests/e2e-plan-validator.mjs && bun tests/e2e-convergence-controller.mjs && bun tests/e2e-programmer.mjs && bun tests/e2e-advisor-contract.mjs && bun tests/e2e-real-plan-handoff.mjs
 ```
 
 ### Rollback and reinstall
@@ -212,10 +280,13 @@ omp plugin install github:stgmt/omp-plan-kit#v1.2.0
 ```text
 src/plan-validator.ts                  deterministic structural & actionability plan validator
 src/extension.ts                       convergence controller, preflight & advisor entrypoint
+src/plan-mode-hook.ts                    public plan-mode event broker and instruction injection
 dist/extension.js                      shipped OMP plugin bundle
 ROADMAP.md                             product direction and release gates
 scripts/install-all-profiles.mjs       CLI install across current PC profiles
 scripts/uninstall-all-profiles.mjs     CLI uninstall across current PC profiles
+tests/e2e-plan-mode-hook.mjs          real-loader public hook and external consumer tests
+tests/e2e-plan-mode-hook-mutations.mjs mutation coverage for the plan-mode broker
 tests/e2e-plan-validator.mjs           structural & actionable validator tests
 tests/e2e-validator-mutations.mjs      BDD scenarios that kill source mutations of the gate
 tests/e2e-convergence-controller.mjs   convergence tests (churn, repeats, slug hopping, reset)
@@ -252,8 +323,8 @@ A plan submitted through `xd://propose` is validated in one of two ways.
 
 ## Release
 
-Current release: [`v1.5.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.5.0).
+Current release: [`v1.6.0`](https://github.com/stgmt/omp-plan-kit/releases/tag/v1.6.0).
 
-Release review report: `audit-reports/omp-plan-kit-v1.3.0-review-2026-09-04.md`.
+Release review report: `audit-reports/omp-plan-kit-v1.6.0-review-2026-09-06.md`.
 
 License: MIT.

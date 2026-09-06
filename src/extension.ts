@@ -6,11 +6,19 @@ import { complete } from "@oh-my-pi/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { Model } from "@oh-my-pi/pi-ai";
 import {
+  PLAN_CORE_TEMPLATE,
   type PlanIssue,
   formatRepairPacket,
   issueSignature,
   validatePlanStructure,
 } from "./plan-validator.js";
+import { PlanCoreRequirementRegistry } from "./plan-core-requirement.js";
+import {
+  ENTER_PLAN_MODE_CHANNEL,
+  PlanModeHookBroker,
+  isEnterPlanModeEventV1,
+  type EnterPlanModeEventV1,
+} from "./plan-mode-hook.js";
 
 const PROPOSE_PATH = "xd://propose";
 const PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
@@ -26,6 +34,13 @@ const MAX_FAILED_VALIDATIONS = 3;
 const MAX_SAME_HASH_REPEATS = 2;
 const MAX_NO_PROGRESS_ATTEMPTS = 2;
 const MAX_TURN_PROPOSALS = 4;
+const PLAN_MODE_FORMAT_CONTRACT = [
+  "OMP Plan Kit mandatory plan-core contract:",
+  "The plan MUST begin at line 1 with this exact JSON plan-core template:",
+  PLAN_CORE_TEMPLATE,
+  "Replace every placeholder value, but keep all JSON key names unchanged. Values may use any language.",
+  "Before writing xd://propose, reread the complete plan artifact and resolve every listed validation defect.",
+].join("\n");
 
 export type ValidationCycle = {
   failedAttempts: number;
@@ -64,6 +79,7 @@ type CompleteFn = typeof complete;
 export type TestDependencies = {
   complete?: CompleteFn;
   validatePlan?: typeof validatePlanStructure;
+  requiresPlanCore?: (sessionId: string) => boolean;
 };
 
 let activeTestDependencies: TestDependencies = {};
@@ -304,6 +320,9 @@ async function reviewProposedPlan(
 
 export function createPlanProtectionForTest(dependencies: TestDependencies = {}) {
   const states = new Map<string, SessionState>();
+  const requiresPlanCore = dependencies.requiresPlanCore
+    ?? activeTestDependencies.requiresPlanCore
+    ?? (() => false);
   return {
     async handleToolCall(event: { toolName?: string; toolCallId?: string; input?: Record<string, unknown> }, ctx: ExtensionContext): Promise<GuardResult> {
       const completeImpl = dependencies.complete ?? activeTestDependencies.complete ?? complete;
@@ -406,7 +425,7 @@ export function createPlanProtectionForTest(dependencies: TestDependencies = {})
         // 3. Execute deterministic validation
         let issues: PlanIssue[];
         try {
-          issues = validatePlanImpl(planContent);
+          issues = validatePlanImpl(planContent, { requirePlanCore: requiresPlanCore(sessionId) });
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await writeReceipt({
@@ -520,11 +539,38 @@ export {
   validatePlanStructure,
   issueSignature,
   formatRepairPacket,
+  PLAN_CORE_TEMPLATE,
+  ENTER_PLAN_MODE_CHANNEL,
+  isEnterPlanModeEventV1,
 };
+export type { EnterPlanModeEventV1 };
 
 export default function planProtection(pi: ExtensionAPI): void {
   pi.setLabel("OMP Plan Kit");
-  const policy = createPlanProtectionForTest();
-  pi.on("before_agent_start", async (event, ctx) => policy.handleAgentStart(event, ctx));
+  const requirements = new PlanCoreRequirementRegistry();
+  const policy = createPlanProtectionForTest({
+    requiresPlanCore: (sessionId) => requirements.isRequired(sessionId),
+  });
+  const broker = new PlanModeHookBroker(pi.events, pi.logger);
+  const unsubscribePlanModeHook = pi.events.on(ENTER_PLAN_MODE_CHANNEL, (raw) => {
+    if (!isEnterPlanModeEventV1(raw)) return;
+    requirements.activate(raw.sessionId, raw.activationId);
+    raw.addInstruction({
+      id: "omp-plan-kit:format-contract",
+      content: PLAN_MODE_FORMAT_CONTRACT,
+    });
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    await policy.handleAgentStart(event, ctx);
+    broker.observeLatestModeChange(ctx);
+  });
+  pi.on("context", (event, ctx) => broker.handleContext(event, ctx));
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));
+  pi.on("session_shutdown", (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    broker.clearSession(sessionId);
+    requirements.clear(sessionId);
+    unsubscribePlanModeHook();
+  });
 }

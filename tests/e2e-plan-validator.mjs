@@ -777,6 +777,21 @@ try {
   assert.equal(uiPass, undefined, "Valid UI plan proposal must pass validator and reach advisor");
   assert.equal(requests.length, 2, "Advisor must be called for valid UI plan");
 
+  // Integration Test G: an activated plan-mode policy requires the JSON core before advisor review
+  const strictPolicy = createPlanProtectionForTest({
+    complete: completeFake,
+    requiresPlanCore: (candidateSessionId) => candidateSessionId === sessionId,
+  });
+  await fs.writeFile(path.join(localRoot, "strict-plan.md"), validContent, "utf8");
+  const strictBlock = await strictPolicy.handleToolCall({
+    toolName: "write",
+    toolCallId: "call-strict",
+    input: { path: "xd://propose", content: "strict" },
+  }, context);
+  assert.equal(strictBlock?.block, true);
+  assert.match(strictBlock.reason, /PLAN_CORE_REQUIRED/);
+  assert.equal(requests.length, 2, "Required-core failure must block before the advisor");
+
   process.stdout.write(`${JSON.stringify({
     schema: "omp-plan-validator-e2e@2",
     decision: "pass",
@@ -799,6 +814,7 @@ try {
       formatRepairPacketContractCompliant: true,
       zeroAdvisorCallsOnValidatorFailures: true,
       validPlanReachesAdvisor: true,
+      requiredCoreBlocksBeforeAdvisor: true,
     },
     totalValidatorTests: 23,
     advisorCalls: requests.length,
@@ -826,6 +842,11 @@ try {
   const planWithCore = "---\n" + JSON.stringify(core, null, 2) + "\n---\n" + body;
   const issues = validatePlanStructure(planWithCore);
   assert.deepEqual(issues, [], "valid plan core must pass regardless of heading language");
+  assert.deepEqual(
+    validatePlanStructure(planWithCore, { requirePlanCore: true }),
+    [],
+    "valid plan core must pass when the plan-mode policy requires it",
+  );
   const extraKeys = JSON.parse(JSON.stringify(core));
   extraKeys.sections.owner = "любой текст";
   extraKeys.futureField = { nested: true };
@@ -897,4 +918,31 @@ try {
   ].join("\n");
   const issues = validatePlanStructure(planWithHr);
   assert.deepEqual(issues, [], "unclosed leading --- must fall back to the Markdown path");
+
+  const strictIssues = validatePlanStructure(planWithHr, { requirePlanCore: true });
+  assert.equal(strictIssues.length, 1);
+  assert.equal(strictIssues[0].code, "PLAN_CORE_INVALID");
+  assert.match(strictIssues[0].message, /no closing delimiter within the first 100 lines/);
+}
+
+// 19. BDD: a plan-mode policy requires the machine-readable core at line 1
+{
+  const markdownPlan = [
+    "## Context",
+    "Context.",
+    "## Approach",
+    "1. Change `src/feature.ts`.",
+    "## Verification",
+    "- `bun test` → exit code 0",
+  ].join("\n");
+  const issues = validatePlanStructure(markdownPlan, { requirePlanCore: true });
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].code, "PLAN_CORE_REQUIRED");
+  assert.equal(issues[0].line, 1);
+  assert.match(issues[0].message, /must begin with the machine-readable plan core/);
+  assert.deepEqual(validatePlanStructure(markdownPlan), [], "legacy Markdown remains valid without the strict policy");
+
+  const emptyIssues = validatePlanStructure("", { requirePlanCore: true });
+  assert.equal(emptyIssues.length, 1);
+  assert.equal(emptyIssues[0].code, "PLAN_CORE_REQUIRED");
 }

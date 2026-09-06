@@ -14,6 +14,7 @@ export type PlanIssue = {
     | "SECTION_EMPTY"
     | "APPROACH_TARGET_MISSING"
     | "VERIFICATION_NOT_ACTIONABLE"
+    | "PLAN_CORE_REQUIRED"
     | "PLAN_CORE_INVALID";
   section?: PlanSection;
   line?: number;
@@ -254,6 +255,28 @@ function isVerificationActionable(
 // "expects") are format literals, like YAML keys: they are not translated.
 // Values are free language. Unknown extra keys are ignored (forward compat).
 
+export const PLAN_CORE_TEMPLATE = [
+  "---",
+  "{",
+  '  "sections": {',
+  '    "context": "<task description, any language>",',
+  '    "approach": [',
+  '      {',
+  '        "action": "<what to do>",',
+  '        "target": "<exact file, symbol, route, or UI path>"',
+  '      }',
+  '    ],',
+  '    "verification": [',
+  '      {',
+  '        "command": "<command or exact verification surface>",',
+  '        "expects": "<observable result, any language>"',
+  '      }',
+  '    ]',
+  '  }',
+  '}',
+  '---',
+].join("\n");
+
 export interface PlanCoreApproachStep {
   action: string;
   target: string;
@@ -277,6 +300,10 @@ export interface ParsedPlanCore {
   issues: PlanIssue[];
 }
 
+export interface PlanValidationOptions {
+  requirePlanCore?: boolean;
+}
+
 const PLAN_CORE_MAX_HEAD_LINES = 100;
 
 function isNonEmptyString(value: unknown): value is string {
@@ -289,6 +316,15 @@ function coreIssue(message: string, fix: string, line?: number): PlanIssue {
     line,
     message: `Plan core (front-matter): ${message}`,
     fix,
+  };
+}
+
+function coreRequiredIssue(): PlanIssue {
+  return {
+    code: "PLAN_CORE_REQUIRED",
+    line: 1,
+    message: "Plan created in OMP Plan Mode must begin with the machine-readable plan core",
+    fix: "Start line 1 with the exact JSON plan-core template injected when Plan Mode started.",
   };
 }
 
@@ -434,8 +470,9 @@ export function parsePlanCore(lines: readonly string[]): ParsedPlanCore {
   };
 }
 
-export function validatePlanStructure(markdown: string): PlanIssue[] {
+export function validatePlanStructure(markdown: string, options: PlanValidationOptions = {}): PlanIssue[] {
   if (!markdown || markdown.trim().length === 0) {
+    if (options.requirePlanCore) return [coreRequiredIssue()];
     return [
       {
         code: "PLAN_EMPTY",
@@ -446,10 +483,23 @@ export function validatePlanStructure(markdown: string): PlanIssue[] {
     ];
   }
 
+  const coreLines = markdown.split(/\r?\n/);
+  const startsWithPlanCore = (coreLines[0] ?? "").trim() === "---";
+  if (options.requirePlanCore && !startsWithPlanCore) return [coreRequiredIssue()];
+
   // Machine-readable plan core (optional JSON front-matter) takes precedence:
   // when a core block is present, the DATA is validated and the Markdown path
   // (heading keys, section order, prose proofs) is skipped entirely.
-  const parsedCore = parsePlanCore(markdown.split(/\r?\n/));
+  const parsedCore = parsePlanCore(coreLines);
+  if (options.requirePlanCore && startsWithPlanCore && parsedCore.blockEndLine === undefined) {
+    return [
+      coreIssue(
+        `opening --- delimiter has no closing delimiter within the first ${PLAN_CORE_MAX_HEAD_LINES} lines`,
+        `Close the JSON plan core with --- within the first ${PLAN_CORE_MAX_HEAD_LINES} lines.`,
+        1,
+      ),
+    ];
+  }
   if (parsedCore.blockEndLine !== undefined) {
     return parsedCore.issues;
   }

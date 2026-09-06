@@ -170,6 +170,28 @@ function isVerificationActionable(lines, primaryLine, endIndex, lineFenceState) 
   }
   return false;
 }
+var PLAN_CORE_TEMPLATE = [
+  "---",
+  "{",
+  '  "sections": {',
+  '    "context": "<task description, any language>",',
+  '    "approach": [',
+  "      {",
+  '        "action": "<what to do>",',
+  '        "target": "<exact file, symbol, route, or UI path>"',
+  "      }",
+  "    ],",
+  '    "verification": [',
+  "      {",
+  '        "command": "<command or exact verification surface>",',
+  '        "expects": "<observable result, any language>"',
+  "      }",
+  "    ]",
+  "  }",
+  "}",
+  "---"
+].join(`
+`);
 var PLAN_CORE_MAX_HEAD_LINES = 100;
 function isNonEmptyString(value) {
   return typeof value === "string" && value.trim().length > 0;
@@ -180,6 +202,14 @@ function coreIssue(message, fix, line) {
     line,
     message: `Plan core (front-matter): ${message}`,
     fix
+  };
+}
+function coreRequiredIssue() {
+  return {
+    code: "PLAN_CORE_REQUIRED",
+    line: 1,
+    message: "Plan created in OMP Plan Mode must begin with the machine-readable plan core",
+    fix: "Start line 1 with the exact JSON plan-core template injected when Plan Mode started."
   };
 }
 function parsePlanCore(lines) {
@@ -289,8 +319,10 @@ function parsePlanCore(lines) {
     }
   };
 }
-function validatePlanStructure(markdown) {
+function validatePlanStructure(markdown, options = {}) {
   if (!markdown || markdown.trim().length === 0) {
+    if (options.requirePlanCore)
+      return [coreRequiredIssue()];
     return [
       {
         code: "PLAN_EMPTY",
@@ -300,7 +332,16 @@ function validatePlanStructure(markdown) {
       }
     ];
   }
-  const parsedCore = parsePlanCore(markdown.split(/\r?\n/));
+  const coreLines = markdown.split(/\r?\n/);
+  const startsWithPlanCore = (coreLines[0] ?? "").trim() === "---";
+  if (options.requirePlanCore && !startsWithPlanCore)
+    return [coreRequiredIssue()];
+  const parsedCore = parsePlanCore(coreLines);
+  if (options.requirePlanCore && startsWithPlanCore && parsedCore.blockEndLine === undefined) {
+    return [
+      coreIssue(`opening --- delimiter has no closing delimiter within the first ${PLAN_CORE_MAX_HEAD_LINES} lines`, `Close the JSON plan core with --- within the first ${PLAN_CORE_MAX_HEAD_LINES} lines.`, 1)
+    ];
+  }
   if (parsedCore.blockEndLine !== undefined) {
     return parsedCore.issues;
   }
@@ -589,6 +630,170 @@ function formatRepairPacket(slug, issues, attempt, maxAttempts) {
 `);
 }
 
+// src/plan-core-requirement.ts
+class PlanCoreRequirementRegistry {
+  #activationIds = new Map;
+  activate(sessionId, activationId) {
+    this.#activationIds.set(sessionId, activationId);
+  }
+  isRequired(sessionId) {
+    return this.#activationIds.has(sessionId);
+  }
+  clear(sessionId) {
+    this.#activationIds.delete(sessionId);
+  }
+}
+
+// src/plan-mode-hook.ts
+var ENTER_PLAN_MODE_CHANNEL = "omp-plan-kit:enter-plan-mode";
+var PLAN_MODE_CONTEXT_TYPE = "plan-mode-context";
+var PLAN_MODE_INSTRUCTION_TYPE = "omp-plan-kit:plan-mode-instruction";
+function isEnterPlanModeEventV1(value) {
+  if (!isRecord(value))
+    return false;
+  return value.apiVersion === 1 && isNonEmptyString2(value.sessionId) && isNonEmptyString2(value.activationId) && (value.planFilePath === undefined || typeof value.planFilePath === "string") && typeof value.addInstruction === "function";
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function isNonEmptyString2(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function isPlanModeContextMessage(message) {
+  return isRecord(message) && message.role === "custom" && message.customType === PLAN_MODE_CONTEXT_TYPE;
+}
+function isPlanModeInstructionMessage(message) {
+  return isRecord(message) && message.role === "custom" && message.customType === PLAN_MODE_INSTRUCTION_TYPE;
+}
+function latestModeChange(ctx) {
+  const getBranch = ctx.sessionManager.getBranch;
+  if (typeof getBranch !== "function")
+    return;
+  let branch;
+  try {
+    branch = getBranch.call(ctx.sessionManager);
+  } catch {
+    return;
+  }
+  if (!Array.isArray(branch))
+    return;
+  for (let index = branch.length - 1;index >= 0; index -= 1) {
+    const entry = branch[index];
+    if (!isRecord(entry) || entry.type !== "mode_change" || !isNonEmptyString2(entry.id) || typeof entry.mode !== "string") {
+      continue;
+    }
+    const data = isRecord(entry.data) ? entry.data : undefined;
+    const planFilePath = isNonEmptyString2(data?.planFilePath) ? data.planFilePath : undefined;
+    return { id: entry.id, mode: entry.mode, planFilePath };
+  }
+  return null;
+}
+
+class PlanModeHookBroker {
+  #states = new Map;
+  #events;
+  #logger;
+  constructor(events, logger) {
+    this.#events = events;
+    this.#logger = logger;
+  }
+  observeLatestModeChange(ctx) {
+    const state = this.#stateFor(ctx.sessionManager.getSessionId());
+    const observed = latestModeChange(ctx);
+    if (observed !== undefined)
+      state.latestModeChange = observed ?? undefined;
+    return state.latestModeChange;
+  }
+  handleContext(event, ctx) {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const state = this.#stateFor(sessionId);
+    this.observeLatestModeChange(ctx);
+    const markerIndex = event.messages.findIndex(isPlanModeContextMessage);
+    if (markerIndex < 0) {
+      state.active = undefined;
+      return;
+    }
+    const journalPlan = state.latestModeChange?.mode === "plan" ? state.latestModeChange : undefined;
+    let activation = state.active;
+    if (!activation) {
+      activation = this.#startActivation(sessionId, state, journalPlan);
+    } else if (journalPlan && !activation.journalId) {
+      activation.journalId = journalPlan.id;
+      activation.planFilePath ??= journalPlan.planFilePath;
+    } else if (journalPlan && activation.journalId !== journalPlan.id) {
+      activation = this.#startActivation(sessionId, state, journalPlan);
+    }
+    const messagesWithoutPriorInstructions = event.messages.filter((message) => !isPlanModeInstructionMessage(message));
+    const currentMarkerIndex = messagesWithoutPriorInstructions.findIndex(isPlanModeContextMessage);
+    const injected = activation.instructions.map((instruction) => ({
+      role: "custom",
+      customType: PLAN_MODE_INSTRUCTION_TYPE,
+      content: instruction.content,
+      display: false,
+      attribution: "agent",
+      details: { apiVersion: 1, id: instruction.id },
+      timestamp: Date.now()
+    }));
+    return {
+      messages: [
+        ...messagesWithoutPriorInstructions.slice(0, currentMarkerIndex + 1),
+        ...injected,
+        ...messagesWithoutPriorInstructions.slice(currentMarkerIndex + 1)
+      ]
+    };
+  }
+  clearSession(sessionId) {
+    this.#states.delete(sessionId);
+  }
+  #stateFor(sessionId) {
+    const existing = this.#states.get(sessionId);
+    if (existing)
+      return existing;
+    const created = { nextObservationId: 0 };
+    this.#states.set(sessionId, created);
+    return created;
+  }
+  #startActivation(sessionId, state, journalPlan) {
+    const activationId = journalPlan?.id ?? `observation:${++state.nextObservationId}`;
+    const instructions = new Map;
+    let collecting = true;
+    const event = {
+      apiVersion: 1,
+      sessionId,
+      activationId,
+      ...journalPlan?.planFilePath ? { planFilePath: journalPlan.planFilePath } : {},
+      addInstruction: (input) => {
+        if (!collecting) {
+          this.#logger?.warn("Rejected late plan-mode instruction", { sessionId, activationId });
+          return;
+        }
+        if (!isRecord(input) || !isNonEmptyString2(input.id) || !isNonEmptyString2(input.content)) {
+          this.#logger?.warn("Rejected invalid plan-mode instruction", { sessionId, activationId });
+          return;
+        }
+        const id = input.id.trim();
+        if (instructions.has(id))
+          return;
+        instructions.set(id, { id, content: input.content });
+      }
+    };
+    const activation = {
+      activationId,
+      journalId: journalPlan?.id,
+      planFilePath: journalPlan?.planFilePath,
+      instructions: []
+    };
+    state.active = activation;
+    try {
+      this.#events.emit(ENTER_PLAN_MODE_CHANNEL, event);
+    } finally {
+      collecting = false;
+      activation.instructions = [...instructions.values()];
+    }
+    return activation;
+  }
+}
+
 // src/extension.ts
 var PROPOSE_PATH = "xd://propose";
 var PLAN_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u;
@@ -604,6 +809,14 @@ var MAX_FAILED_VALIDATIONS = 3;
 var MAX_SAME_HASH_REPEATS = 2;
 var MAX_NO_PROGRESS_ATTEMPTS = 2;
 var MAX_TURN_PROPOSALS = 4;
+var PLAN_MODE_FORMAT_CONTRACT = [
+  "OMP Plan Kit mandatory plan-core contract:",
+  "The plan MUST begin at line 1 with this exact JSON plan-core template:",
+  PLAN_CORE_TEMPLATE,
+  "Replace every placeholder value, but keep all JSON key names unchanged. Values may use any language.",
+  "Before writing xd://propose, reread the complete plan artifact and resolve every listed validation defect."
+].join(`
+`);
 var activeTestDependencies = {};
 function setTestDependencies(deps) {
   activeTestDependencies = deps;
@@ -793,6 +1006,7 @@ async function reviewProposedPlan(ctx, state, check, planContent, completeImpl) 
 }
 function createPlanProtectionForTest(dependencies = {}) {
   const states = new Map;
+  const requiresPlanCore = dependencies.requiresPlanCore ?? activeTestDependencies.requiresPlanCore ?? (() => false);
   return {
     async handleToolCall(event, ctx) {
       const completeImpl = dependencies.complete ?? activeTestDependencies.complete ?? complete;
@@ -881,7 +1095,7 @@ ${formatRepairPacket(check.slug, cycle.lastIssues, cycle.failedAttempts, MAX_FAI
         }
         let issues;
         try {
-          issues = validatePlanImpl(planContent);
+          issues = validatePlanImpl(planContent, { requirePlanCore: requiresPlanCore(sessionId) });
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           await writeReceipt({
@@ -975,14 +1189,40 @@ ${formatRepairPacket(check.slug, issues, cycle.failedAttempts, MAX_FAILED_VALIDA
 }
 function planProtection(pi) {
   pi.setLabel("OMP Plan Kit");
-  const policy = createPlanProtectionForTest();
-  pi.on("before_agent_start", async (event, ctx) => policy.handleAgentStart(event, ctx));
+  const requirements = new PlanCoreRequirementRegistry;
+  const policy = createPlanProtectionForTest({
+    requiresPlanCore: (sessionId) => requirements.isRequired(sessionId)
+  });
+  const broker = new PlanModeHookBroker(pi.events, pi.logger);
+  const unsubscribePlanModeHook = pi.events.on(ENTER_PLAN_MODE_CHANNEL, (raw) => {
+    if (!isEnterPlanModeEventV1(raw))
+      return;
+    requirements.activate(raw.sessionId, raw.activationId);
+    raw.addInstruction({
+      id: "omp-plan-kit:format-contract",
+      content: PLAN_MODE_FORMAT_CONTRACT
+    });
+  });
+  pi.on("before_agent_start", async (event, ctx) => {
+    await policy.handleAgentStart(event, ctx);
+    broker.observeLatestModeChange(ctx);
+  });
+  pi.on("context", (event, ctx) => broker.handleContext(event, ctx));
   pi.on("tool_call", async (event, ctx) => policy.handleToolCall(event, ctx));
+  pi.on("session_shutdown", (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    broker.clearSession(sessionId);
+    requirements.clear(sessionId);
+    unsubscribePlanModeHook();
+  });
 }
 export {
+  ENTER_PLAN_MODE_CHANNEL,
+  PLAN_CORE_TEMPLATE,
   createPlanProtectionForTest,
   planProtection as default,
   formatRepairPacket,
+  isEnterPlanModeEventV1,
   issueSignature,
   setTestDependencies,
   validatePlanStructure
