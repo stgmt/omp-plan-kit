@@ -269,7 +269,7 @@ bun tests/e2e-plan-mode-hook.mjs && bun tests/e2e-plan-mode-hook-mutations.mjs &
 
 ```bash
 omp plugin uninstall omp-plan-kit
-omp plugin install github:stgmt/omp-plan-kit#v1.2.0
+omp plugin install github:stgmt/omp-plan-kit#v1.6.0
 ```
 
 ## Repository map
