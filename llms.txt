@@ -20,7 +20,7 @@
 - All current profiles: `node scripts/install-all-profiles.mjs`.
 - Manual programmer proof: `npm run e2e:programmer`.
 - Product roadmap: `ROADMAP.md`.
-- Release review: audit-reports/omp-plan-kit-v1.7.0-review-2026-09-06.md.
+- Release review: audit-reports/omp-plan-kit-v1.7.1-review-2026-09-06.md.
 - Origin incident: https://github.com/can1357/oh-my-pi/issues/10333.
 - Reported impact: an older plan was accepted after a scope correction, costing roughly half of one week's Codex allowance on the maximum subscription tier.
 
